@@ -1,76 +1,148 @@
-# tool-gateway-kgateway-operator
+# Tool Gateway kgateway Operator
 
-Operator that deploys ToolGateway instances based on agentgateway/kgateway
+The Tool Gateway kgateway Operator is a Kubernetes operator that manages `ToolGateway` instances based on [agentgateway/kgateway](https://github.com/agentgateway/kgateway). It provides centralized gateway management for tool workloads within the Agentic Layer ecosystem.
 
-## Description
+## Table of Contents
 
-This is a Kubernetes operator built with [operator-sdk](https://sdk.operatorframework.io/) that manages ToolGateway instances.
+- [Prerequisites](#prerequisites)
+- [Getting Started](#getting-started)
+- [Development](#development)
+- [Configuration](#configuration)
+- [End-to-End (E2E) Testing](#end-to-end-e2e-testing)
+- [Testing Tools and Configuration](#testing-tools-and-configuration)
+- [Sample Data](#sample-data)
+- [Contribution](#contribution)
+
+----
+
+## Prerequisites
+
+Before working with this project, ensure you have the following tools installed on your system:
+
+* **Go**: version 1.24.0 or higher
+* **Docker**: version 20.10+ (or a compatible alternative like Podman)
+* **kubectl**: The Kubernetes command-line tool
+* **kind**: For running Kubernetes locally in Docker
+* **make**: The build automation tool
+
+----
 
 ## Getting Started
 
-### Prerequisites
+**Quick Start:**
 
-- Go 1.24.0 or later
-- Kubernetes cluster (or kind/minikube for local development)
-- kubectl configured to interact with your cluster
+```shell
+# Create local cluster and install cert-manager
+kind create cluster
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.19.1/cert-manager.yaml
 
-### Development
-
-Build the operator:
-```bash
-make build
+# Install the Tool Gateway operator
+kubectl apply -f https://github.com/agentic-layer/tool-gateway-kgateway-operator/releases/latest/download/install.yaml
 ```
 
-Run tests:
-```bash
-make test
-```
+## Development
 
-Run linter:
-```bash
-make lint
-```
+Follow the prerequisites above to set up your local environment.
+Then follow these steps to build and deploy the operator locally:
 
-### Installation
-
-Install CRDs into the cluster:
-```bash
+```shell
+# Install CRDs into the cluster
 make install
-```
-
-Deploy the operator:
-```bash
+# Build docker image
+make docker-build
+# Load image into kind cluster (not needed if using local registry)
+make kind-load
+# Deploy the operator to the cluster
 make deploy
 ```
 
-### Running Locally
+After a successful start, you should see the controller manager pod running in the `tool-gateway-kgateway-operator-system` namespace.
 
-Run the operator locally against your configured Kubernetes cluster:
 ```bash
-make run
+kubectl get pods -n tool-gateway-kgateway-operator-system
 ```
 
-## Project Structure
+## Configuration
 
-This project is scaffolded using operator-sdk and follows the standard Kubebuilder project layout:
+### ToolGateway Configuration
 
-- `cmd/` - Main entry point for the operator
-- `config/` - Kubernetes manifests for deployment
-- `test/` - Test files and utilities
-- `Makefile` - Build, test, and deployment automation
+To create a kgateway-based gateway for your tools, define a `ToolGateway` resource:
 
-## License
+```yaml
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: ToolGateway
+metadata:
+  name: my-tool-gateway
+spec: {}
+```
 
-Copyright 2026.
+## End-to-End (E2E) Testing
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+### Prerequisites for E2E Tests
 
-    http://www.apache.org/licenses/LICENSE-2.0
+- **kind** must be installed and available in PATH
+- **Docker** running and accessible
+- **kubectl** configured and working
 
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+### Running E2E Tests
+
+The E2E tests automatically create an isolated Kind cluster, deploy the operator, run comprehensive tests, and clean up afterwards.
+
+```bash
+# Run complete E2E test suite
+make test-e2e
+```
+
+### Manual E2E Test Setup
+
+If you need to run E2E tests manually or inspect the test environment:
+
+```bash
+# Set up test cluster
+make setup-test-e2e
+```
+```bash
+# Run E2E tests against the existing cluster
+KIND_CLUSTER=tool-gateway-kgateway-operator-test-e2e go test ./test/e2e/ -v -ginkgo.v
+```
+```bash
+# Clean up test cluster when done
+make cleanup-test-e2e
+```
+
+## Testing Tools and Configuration
+
+The project includes comprehensive test coverage:
+
+- **Unit Tests**: Test suite for the controller
+- **E2E Tests**: End-to-end tests in Kind cluster
+- **Ginkgo/Gomega**: BDD-style testing framework
+- **EnvTest**: Kubernetes API server testing environment
+
+Run tests with:
+
+```bash
+# Run unit and integration tests
+make test
+
+# Run E2E tests in kind cluster
+make test-e2e
+```
+
+## Sample Data
+
+The project includes sample manifests to help you get started.
+
+  * **Where to find sample data?**
+    Sample manifests are located in the `config/samples/` directory.
+
+  * **How to deploy sample resources?**
+    You can deploy sample ToolGateway resources with:
+
+    ```bash
+    kubectl apply -k config/samples/
+    ```
+
+## Contribution
+
+See [Contribution Guide](https://github.com/agentic-layer/tool-gateway-kgateway-operator?tab=contributing-ov-file) for details on contribution, and the process for submitting pull requests.

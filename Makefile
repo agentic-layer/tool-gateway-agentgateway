@@ -3,7 +3,7 @@
 # To re-generate a bundle for another specific version without changing the standard setup, you can:
 # - use the VERSION as arg of the bundle target (e.g make bundle VERSION=0.0.2)
 # - use environment variables to overwrite this value (e.g export VERSION=0.0.2)
-VERSION ?= 0.0.1
+VERSION ?= $(shell git describe --tags --always | sed 's/^v//')
 
 # CHANNELS define the bundle channels used in the bundle.
 # Add a new line here if you would like to change its default config. (E.g CHANNELS = "candidate,fast,stable")
@@ -28,8 +28,10 @@ BUNDLE_METADATA_OPTS ?= $(BUNDLE_CHANNELS) $(BUNDLE_DEFAULT_CHANNEL)
 # This variable is used to construct full image tags for bundle and catalog images.
 #
 # For example, running 'make bundle-build bundle-push catalog-build catalog-push' will build and push both
-# agentic-layer.com/tool-gateway-kgateway-operator-bundle:$VERSION and agentic-layer.com/tool-gateway-kgateway-operator-catalog:$VERSION.
-IMAGE_TAG_BASE ?= agentic-layer.com/tool-gateway-kgateway-operator
+# ghcr.io/agentic-layer/tool-gateway-kgateway-operator-bundle:$VERSION and ghcr.io/agentic-layer/tool-gateway-kgateway-operator-catalog:$VERSION.
+IMAGE_TAG_BASE ?= ghcr.io/agentic-layer/tool-gateway-kgateway-operator
+
+MANIFESTS_IMG ?= oci://ghcr.io/agentic-layer/manifests/tool-gateway-kgateway-operator:$(VERSION)
 
 # BUNDLE_IMG defines the image:tag used for the bundle.
 # You can use it as an arg. (E.g make bundle-build BUNDLE_IMG=<some-registry>/<project-name-bundle>:<tag>)
@@ -50,7 +52,7 @@ endif
 # This is useful for CI or a project to utilize a specific version of the operator-sdk toolkit.
 OPERATOR_SDK_VERSION ?= v1.42.0
 # Image URL to use all building/pushing image targets
-IMG ?= controller:latest
+IMG ?= $(IMAGE_TAG_BASE):$(VERSION)
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -135,7 +137,6 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
 	KIND_CLUSTER=$(KIND_CLUSTER) go test ./test/e2e/ -v -ginkgo.v
-	$(MAKE) cleanup-test-e2e
 
 .PHONY: cleanup-test-e2e
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
@@ -168,7 +169,7 @@ run: manifests generate fmt vet ## Run a controller from your host.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
-	$(CONTAINER_TOOL) build -t ${IMG} .
+	$(CONTAINER_TOOL) build --build-arg VERSION=${VERSION} -t ${IMG} .
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
@@ -180,14 +181,18 @@ docker-push: ## Push docker image with the manager.
 # - have enabled BuildKit. More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 # - be able to push the image to your registry (i.e. if you do not set a valid value via IMG=<myregistry/image:<tag>> then the export will fail)
 # To adequately provide solutions that are compatible with multiple platforms, you should consider using this option.
-PLATFORMS ?= linux/arm64,linux/amd64,linux/s390x,linux/ppc64le
+PLATFORMS ?= linux/arm64,linux/amd64
 .PHONY: docker-buildx
 docker-buildx: ## Build and push docker image for the manager for cross-platform support
 	# copy existing Dockerfile and insert --platform=${BUILDPLATFORM} into Dockerfile.cross, and preserve the original Dockerfile
 	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
 	- $(CONTAINER_TOOL) buildx create --name tool-gateway-kgateway-operator-builder
 	$(CONTAINER_TOOL) buildx use tool-gateway-kgateway-operator-builder
-	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f Dockerfile.cross .
+	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) \
+    		  --build-arg VERSION=$(VERSION) \
+    		  --tag $(IMG) \
+    		  --tag $(IMAGE_TAG_BASE):latest \
+    		  -f Dockerfile.cross .
 	- $(CONTAINER_TOOL) buildx rm tool-gateway-kgateway-operator-builder
 	rm Dockerfile.cross
 
@@ -196,6 +201,18 @@ build-installer: manifests generate kustomize ## Generate a consolidated YAML wi
 	mkdir -p dist
 	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
 	$(KUSTOMIZE) build config/default > dist/install.yaml
+
+.PHONY: flux-push
+flux-push: manifests generate kustomize ## Push the manifests to a oci repository for FluxCD to consume.
+	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
+	flux push artifact $(MANIFESTS_IMG) \
+		--path="./config" \
+		--source="$(shell git config --get remote.origin.url)" \
+		--revision="$(VERSION)"
+
+.PHONY: flux-tag-latest
+flux-tag-latest:
+	flux tag artifact $(MANIFESTS_IMG) --tag latest
 
 ##@ Deployment
 
@@ -360,3 +377,7 @@ catalog-build: opm ## Build a catalog image.
 .PHONY: catalog-push
 catalog-push: ## Push a catalog image.
 	$(MAKE) docker-push IMG=$(CATALOG_IMG)
+
+.PHONY: kind
+kind-load:
+	$(KIND) load docker-image $(IMG)
