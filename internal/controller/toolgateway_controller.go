@@ -18,22 +18,33 @@ package controller
 
 import (
 	"context"
+	"fmt"
 
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	agentruntimev1alpha1 "github.com/agentic-layer/agent-runtime-operator/api/v1alpha1"
 )
 
 const ToolGatewayKgatewayControllerName = "runtime.agentic-layer.ai/tool-gateway-kgateway-controller"
+
+const (
+	agentGatewayProxyName       = "agentgateway-proxy"
+	agentGatewaySystemNamespace = "agentgateway-system"
+	agentGatewayClassName       = "agentgateway"
+)
 
 // Version set at build time using ldflags
 var Version = "dev"
@@ -46,15 +57,14 @@ type ToolGatewayReconciler struct {
 }
 
 // +kubebuilder:rbac:groups=runtime.agentic-layer.ai,resources=toolgateways,verbs=get;list;watch
-// +kubebuilder:rbac:groups=runtime.agentic-layer.ai,resources=toolgateways/status,verbs=get
+// +kubebuilder:rbac:groups=runtime.agentic-layer.ai,resources=toolgateways/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=runtime.agentic-layer.ai,resources=toolgatewayclasses,verbs=get;list;watch
 // +kubebuilder:rbac:groups=runtime.agentic-layer.ai,resources=toolservers,verbs=get;list;watch
-// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=agentgateway.dev,resources=agentgatewaybackends,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
-// +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -83,21 +93,33 @@ func (r *ToolGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, nil
 	}
 
+	// Ensure the agentgateway-system namespace exists
+	if err := r.ensureNamespace(ctx); err != nil {
+		log.Error(err, "Failed to ensure agentgateway-system namespace")
+		return ctrl.Result{}, err
+	}
+
+	// Create or update the Gateway
+	if err := r.ensureGateway(ctx, &toolGateway); err != nil {
+		log.Error(err, "Failed to ensure Gateway")
+		return ctrl.Result{}, err
+	}
+
 	// Get all ToolServer resources
-	if _, err := r.getToolServers(ctx); err != nil {
+	toolServers, err := r.getToolServers(ctx)
+	if err != nil {
 		log.Error(err, "Failed to get ToolServers")
 		return ctrl.Result{}, err
 	}
 
-	// TODO: Implement resource creation
-	if err := r.ensureConfigMap(ctx, &toolGateway); err != nil {
-		return ctrl.Result{}, err
-	}
-	if err := r.ensureDeployment(ctx, &toolGateway); err != nil {
-		return ctrl.Result{}, err
-	}
-	if err := r.ensureService(ctx, &toolGateway); err != nil {
-		return ctrl.Result{}, err
+	// Create or update resources for each ToolServer
+	for _, toolServer := range toolServers {
+		if err := r.ensureToolServerResources(ctx, &toolGateway, toolServer); err != nil {
+			log.Error(err, "Failed to ensure ToolServer resources",
+				"toolServerName", toolServer.Name,
+				"toolServerNamespace", toolServer.Namespace)
+			return ctrl.Result{}, err
+		}
 	}
 
 	return ctrl.Result{}, nil
@@ -157,21 +179,213 @@ func (r *ToolGatewayReconciler) getToolServers(ctx context.Context) ([]*agentrun
 	return toolServers, nil
 }
 
-// ensureConfigMap creates or updates the ConfigMap for the ToolGateway
-func (r *ToolGatewayReconciler) ensureConfigMap(_ context.Context, _ *agentruntimev1alpha1.ToolGateway) error {
-	// TODO: Implement ConfigMap creation
+// ensureNamespace ensures the agentgateway-system namespace exists
+func (r *ToolGatewayReconciler) ensureNamespace(ctx context.Context) error {
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: agentGatewaySystemNamespace,
+		},
+	}
+
+	err := r.Get(ctx, types.NamespacedName{Name: agentGatewaySystemNamespace}, ns)
+	if err != nil && apierrors.IsNotFound(err) {
+		return r.Create(ctx, ns)
+	}
+	return err
+}
+
+// ensureGateway creates or updates the agentgateway-proxy Gateway
+func (r *ToolGatewayReconciler) ensureGateway(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway) error {
+	log := logf.FromContext(ctx)
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      agentGatewayProxyName,
+			Namespace: agentGatewaySystemNamespace,
+		},
+	}
+
+	op, err := controllerutil.CreateOrUpdate(ctx, r.Client, gateway, func() error {
+		// Set the gateway specification
+		gateway.Spec = gatewayv1.GatewaySpec{
+			GatewayClassName: gatewayv1.ObjectName(agentGatewayClassName),
+			Listeners: []gatewayv1.Listener{
+				{
+					Name:     gatewayv1.SectionName("http"),
+					Protocol: gatewayv1.HTTPProtocolType,
+					Port:     gatewayv1.PortNumber(80),
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{
+							From: ptr.To(gatewayv1.NamespacesFromAll),
+						},
+					},
+				},
+			},
+		}
+		return nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to create or update Gateway: %w", err)
+	}
+
+	log.Info("Gateway reconciled", "operation", op, "name", gateway.Name, "namespace", gateway.Namespace)
 	return nil
 }
 
-// ensureDeployment creates or updates the Deployment for the ToolGateway
-func (r *ToolGatewayReconciler) ensureDeployment(_ context.Context, _ *agentruntimev1alpha1.ToolGateway) error {
-	// TODO: Implement Deployment creation
+// ensureToolServerResources creates or updates resources for a ToolServer
+func (r *ToolGatewayReconciler) ensureToolServerResources(
+	ctx context.Context,
+	toolGateway *agentruntimev1alpha1.ToolGateway,
+	toolServer *agentruntimev1alpha1.ToolServer,
+) error {
+	// Ensure AgentgatewayBackend
+	if err := r.ensureAgentgatewayBackend(ctx, toolGateway, toolServer); err != nil {
+		return fmt.Errorf("failed to ensure AgentgatewayBackend: %w", err)
+	}
+
+	// Ensure HTTPRoute
+	if err := r.ensureHTTPRoute(ctx, toolGateway, toolServer); err != nil {
+		return fmt.Errorf("failed to ensure HTTPRoute: %w", err)
+	}
+
 	return nil
 }
 
-// ensureService creates or updates the Service for the ToolGateway
-func (r *ToolGatewayReconciler) ensureService(_ context.Context, _ *agentruntimev1alpha1.ToolGateway) error {
-	// TODO: Implement Service creation
+// ensureAgentgatewayBackend creates or updates an AgentgatewayBackend for a ToolServer
+func (r *ToolGatewayReconciler) ensureAgentgatewayBackend(
+	ctx context.Context,
+	toolGateway *agentruntimev1alpha1.ToolGateway,
+	toolServer *agentruntimev1alpha1.ToolServer,
+) error {
+	log := logf.FromContext(ctx)
+
+	// Create AgentgatewayBackend as unstructured since we don't have the CRD types
+	backend := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "agentgateway.dev/v1alpha1",
+			"kind":       "AgentgatewayBackend",
+			"metadata": map[string]interface{}{
+				"name":      toolServer.Name,
+				"namespace": toolServer.Namespace,
+			},
+			"spec": map[string]interface{}{
+				"mcp": map[string]interface{}{
+					"targets": []interface{}{
+						map[string]interface{}{
+			"name": "mcp-target",
+							"static": map[string]interface{}{
+								"host": fmt.Sprintf("%s.%s.svc.cluster.local",
+									toolServer.Name, toolServer.Namespace),
+								"port":     toolServer.Spec.Port,
+								"protocol": "StreamableHTTP",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Try to get existing backend
+	existing := &unstructured.Unstructured{}
+	existing.SetGroupVersionKind(backend.GroupVersionKind())
+	err := r.Get(ctx, types.NamespacedName{
+		Name:      toolServer.Name,
+		Namespace: toolServer.Namespace,
+	}, existing)
+
+	if err != nil && apierrors.IsNotFound(err) {
+		// Create new backend
+		if err := r.Create(ctx, backend); err != nil {
+			return fmt.Errorf("failed to create AgentgatewayBackend: %w", err)
+		}
+		log.Info("Created AgentgatewayBackend", "name", toolServer.Name, "namespace", toolServer.Namespace)
+	} else if err != nil {
+		return fmt.Errorf("failed to get AgentgatewayBackend: %w", err)
+	} else {
+		// Update existing backend
+		existing.Object["spec"] = backend.Object["spec"]
+		if err := r.Update(ctx, existing); err != nil {
+			return fmt.Errorf("failed to update AgentgatewayBackend: %w", err)
+		}
+		log.Info("Updated AgentgatewayBackend", "name", toolServer.Name, "namespace", toolServer.Namespace)
+	}
+
+	return nil
+}
+
+// ensureHTTPRoute creates or updates an HTTPRoute for a ToolServer
+func (r *ToolGatewayReconciler) ensureHTTPRoute(
+	ctx context.Context,
+	toolGateway *agentruntimev1alpha1.ToolGateway,
+	toolServer *agentruntimev1alpha1.ToolServer,
+) error {
+	log := logf.FromContext(ctx)
+
+	// Determine the path for this tool server
+	path := toolServer.Spec.Path
+	if path == "" {
+		// Default path based on transport type
+		if toolServer.Spec.TransportType == "sse" {
+			path = "/sse"
+		} else {
+			path = "/mcp"
+		}
+	}
+
+	route := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      toolServer.Name,
+			Namespace: toolServer.Namespace,
+		},
+	}
+
+	op, err := controllerutil.CreateOrUpdate(ctx, r.Client, route, func() error {
+		// Set the route specification
+		pathType := gatewayv1.PathMatchPathPrefix
+		route.Spec = gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{
+					{
+						Name:      gatewayv1.ObjectName(agentGatewayProxyName),
+						Namespace: ptr.To(gatewayv1.Namespace(agentGatewaySystemNamespace)),
+					},
+				},
+			},
+			Rules: []gatewayv1.HTTPRouteRule{
+				{
+					BackendRefs: []gatewayv1.HTTPBackendRef{
+						{
+							BackendRef: gatewayv1.BackendRef{
+								BackendObjectReference: gatewayv1.BackendObjectReference{
+									Group:     ptr.To(gatewayv1.Group("agentgateway.dev")),
+									Kind:      ptr.To(gatewayv1.Kind("AgentgatewayBackend")),
+									Name:      gatewayv1.ObjectName(toolServer.Name),
+									Namespace: ptr.To(gatewayv1.Namespace(toolServer.Namespace)),
+								},
+							},
+						},
+					},
+					Matches: []gatewayv1.HTTPRouteMatch{
+						{
+							Path: &gatewayv1.HTTPPathMatch{
+								Type:  &pathType,
+								Value: ptr.To(path),
+							},
+						},
+					},
+				},
+			},
+		}
+		return nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to create or update HTTPRoute: %w", err)
+	}
+
+	log.Info("HTTPRoute reconciled", "operation", op, "name", route.Name, "namespace", route.Namespace)
 	return nil
 }
 
@@ -200,9 +414,8 @@ func (r *ToolGatewayReconciler) findToolGatewaysForToolServer(ctx context.Contex
 func (r *ToolGatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&agentruntimev1alpha1.ToolGateway{}).
-		Owns(&appsv1.Deployment{}).
-		Owns(&corev1.Service{}).
-		Owns(&corev1.ConfigMap{}).
+		Owns(&gatewayv1.Gateway{}).
+		Owns(&gatewayv1.HTTPRoute{}).
 		Watches(
 			&agentruntimev1alpha1.ToolServer{},
 			handler.EnqueueRequestsFromMapFunc(r.findToolGatewaysForToolServer),
