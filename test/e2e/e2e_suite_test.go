@@ -99,6 +99,35 @@ var _ = BeforeSuite(func() {
 		}
 	}
 
+	// Install Gateway API CRDs
+	By("installing Gateway API CRDs")
+	_, err = utils.Run(exec.Command("kubectl", "apply", "-f",
+		"https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.0/standard-install.yaml"))
+	Expect(err).NotTo(HaveOccurred(), "Failed to install Gateway API CRDs")
+
+	// Install kgateway with agentgateway support
+	By("creating agentgateway-system namespace")
+	_, err = utils.Run(exec.Command("kubectl", "create", "ns", "agentgateway-system"))
+	Expect(err).NotTo(HaveOccurred(), "Failed to create agentgateway-system namespace")
+
+	By("installing kgateway CRDs")
+	_, err = utils.Run(exec.Command("helm", "upgrade", "-i", "kgateway-crds",
+		"oci://cr.kgateway.dev/kgateway-dev/charts/kgateway-crds",
+		"--namespace", "agentgateway-system",
+		"--version", "v2.1.2"))
+	Expect(err).NotTo(HaveOccurred(), "Failed to install kgateway CRDs")
+
+	By("installing kgateway control plane")
+	_, err = utils.Run(exec.Command("helm", "upgrade", "-i", "kgateway",
+		"oci://cr.kgateway.dev/kgateway-dev/charts/kgateway",
+		"--namespace", "agentgateway-system",
+		"--version", "v2.1.2"))
+	Expect(err).NotTo(HaveOccurred(), "Failed to install kgateway control plane")
+
+	By("waiting for kgateway to be ready")
+	err = utils.VerifyDeploymentReady("kgateway", "agentgateway-system", 3*time.Minute)
+	Expect(err).NotTo(HaveOccurred(), "kgateway should be ready")
+
 	// Deploy the Agent Runtime Operator which is a dependency for this operator
 	By("deploying the agent runtime")
 	_, err = utils.Run(exec.Command("kubectl", "apply", "-f", agentRuntimeInstallUrl))
