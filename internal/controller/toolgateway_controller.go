@@ -414,7 +414,6 @@ func (r *ToolGatewayReconciler) findToolGatewaysForToolServer(ctx context.Contex
 func (r *ToolGatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&agentruntimev1alpha1.ToolGateway{}).
-		Owns(&gatewayv1.Gateway{}).
 		Owns(&gatewayv1.HTTPRoute{}).
 		Watches(
 			&agentruntimev1alpha1.ToolServer{},

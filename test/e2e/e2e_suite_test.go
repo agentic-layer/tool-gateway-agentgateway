@@ -102,7 +102,7 @@ var _ = BeforeSuite(func() {
 	// Install Gateway API CRDs
 	By("installing Gateway API CRDs")
 	_, err = utils.Run(exec.Command("kubectl", "apply", "-f",
-		"https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.0/standard-install.yaml"))
+		"https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.1/standard-install.yaml"))
 	Expect(err).NotTo(HaveOccurred(), "Failed to install Gateway API CRDs")
 
 	// Install kgateway with agentgateway support
