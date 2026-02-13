@@ -30,7 +30,7 @@ import (
 )
 
 const (
-	testNamespace = "showcase-news"
+	testNamespace       = "showcase-news"
 	testToolGatewayName = "test-tool-gateway"
 	testToolServerName  = "website-fetcher"
 )

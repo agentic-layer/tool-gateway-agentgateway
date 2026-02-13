@@ -195,7 +195,7 @@ func (r *ToolGatewayReconciler) ensureNamespace(ctx context.Context) error {
 }
 
 // ensureGateway creates or updates the agentgateway-proxy Gateway
-func (r *ToolGatewayReconciler) ensureGateway(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway) error {
+func (r *ToolGatewayReconciler) ensureGateway(ctx context.Context, _ *agentruntimev1alpha1.ToolGateway) error {
 	log := logf.FromContext(ctx)
 
 	gateway := &gatewayv1.Gateway{
@@ -255,7 +255,7 @@ func (r *ToolGatewayReconciler) ensureToolServerResources(
 // ensureAgentgatewayBackend creates or updates an AgentgatewayBackend for a ToolServer
 func (r *ToolGatewayReconciler) ensureAgentgatewayBackend(
 	ctx context.Context,
-	toolGateway *agentruntimev1alpha1.ToolGateway,
+	_ *agentruntimev1alpha1.ToolGateway,
 	toolServer *agentruntimev1alpha1.ToolServer,
 ) error {
 	log := logf.FromContext(ctx)
@@ -273,7 +273,7 @@ func (r *ToolGatewayReconciler) ensureAgentgatewayBackend(
 				"mcp": map[string]interface{}{
 					"targets": []interface{}{
 						map[string]interface{}{
-			"name": "mcp-target",
+							"name": "mcp-target",
 							"static": map[string]interface{}{
 								"host": fmt.Sprintf("%s.%s.svc.cluster.local",
 									toolServer.Name, toolServer.Namespace),
@@ -318,7 +318,7 @@ func (r *ToolGatewayReconciler) ensureAgentgatewayBackend(
 // ensureHTTPRoute creates or updates an HTTPRoute for a ToolServer
 func (r *ToolGatewayReconciler) ensureHTTPRoute(
 	ctx context.Context,
-	toolGateway *agentruntimev1alpha1.ToolGateway,
+	_ *agentruntimev1alpha1.ToolGateway,
 	toolServer *agentruntimev1alpha1.ToolServer,
 ) error {
 	log := logf.FromContext(ctx)
