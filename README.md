@@ -23,6 +23,7 @@ Before working with this project, ensure you have the following tools installed 
 * **Docker**: version 20.10+ (or a compatible alternative like Podman)
 * **kubectl**: The Kubernetes command-line tool
 * **kind**: For running Kubernetes locally in Docker
+* **helm**: Helm 3+ for installing kgateway
 * **make**: The build automation tool
 
 ----
@@ -32,12 +33,52 @@ Before working with this project, ensure you have the following tools installed 
 **Quick Start:**
 
 ```shell
-# Create local cluster and install cert-manager
+# Create local cluster
 kind create cluster
+
+# Install cert-manager
 kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.19.1/cert-manager.yaml
+
+# Install Gateway API CRDs
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.0/standard-install.yaml
+
+# Install kgateway with agentgateway support
+kubectl create ns agentgateway-system
+
+helm upgrade -i kgateway-crds \
+  oci://cr.kgateway.dev/kgateway-dev/charts/kgateway-crds \
+  --namespace agentgateway-system \
+  --version v2.1.2
+
+helm upgrade -i kgateway \
+  oci://cr.kgateway.dev/kgateway-dev/charts/kgateway \
+  --namespace agentgateway-system \
+  --version v2.1.2
 
 # Install the Tool Gateway operator
 kubectl apply -f https://github.com/agentic-layer/tool-gateway-kgateway/releases/latest/download/install.yaml
+```
+
+## How it Works
+
+The Tool Gateway kgateway Operator creates and manages Gateway API resources based on ToolGateway and ToolServer custom resources:
+
+1. **Gateway Creation**: When a ToolGateway is created, the operator creates an `agentgateway-proxy` Gateway in the `agentgateway-system` namespace with HTTP listener on port 80.
+
+2. **ToolServer Integration**: For each ToolServer resource, the operator creates:
+   - **AgentgatewayBackend**: Configures the MCP backend connection to the ToolServer
+   - **HTTPRoute**: Routes traffic from the gateway to the AgentgatewayBackend using path-based matching
+
+3. **Automatic Updates**: The operator watches for changes to ToolGateway and ToolServer resources and updates the corresponding Gateway API resources automatically.
+
+### Architecture
+
+```
+ToolGateway (CRD)
+    ↓
+agentgateway-proxy (Gateway)
+    ↓
+HTTPRoute (Gateway API) → AgentgatewayBackend → ToolServer
 ```
 
 ## Development
@@ -64,6 +105,14 @@ kubectl get pods -n tool-gateway-kgateway-system
 
 ## Configuration
 
+### Prerequisites for ToolGateway
+
+Before creating a ToolGateway, ensure you have:
+
+1. **Gateway API CRDs** installed in your cluster
+2. **kgateway with agentgateway support** installed (see [Getting Started](#getting-started))
+3. **ToolGatewayClass** with `agentgateway` controller (automatically created by this operator)
+
 ### ToolGateway Configuration
 
 To create a kgateway-based gateway for your tools, define a `ToolGateway` resource:
@@ -73,7 +122,46 @@ apiVersion: runtime.agentic-layer.ai/v1alpha1
 kind: ToolGateway
 metadata:
   name: my-tool-gateway
-spec: {}
+  namespace: my-namespace
+spec:
+  toolGatewayClassName: kgateway  # Optional: uses default if not specified
+```
+
+This will create an `agentgateway-proxy` Gateway in the `agentgateway-system` namespace.
+
+### ToolServer Configuration
+
+Define ToolServer resources that the gateway will route to:
+
+```yaml
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: ToolServer
+metadata:
+  name: my-tool-server
+  namespace: my-namespace
+spec:
+  protocol: mcp
+  transportType: http
+  image: my-tool-server:latest
+  port: 8000
+  path: /mcp
+  replicas: 1
+```
+
+The operator will automatically create:
+- An **AgentgatewayBackend** for the ToolServer
+- An **HTTPRoute** connecting the Gateway to the backend
+
+### Accessing Your Tools
+
+Once deployed, tools are accessible via the agentgateway-proxy Gateway:
+
+```shell
+# Get the Gateway service endpoint
+kubectl get svc -n agentgateway-system
+
+# Access your tool via the gateway
+curl http://<gateway-endpoint>/mcp
 ```
 
 ## End-to-End (E2E) Testing
