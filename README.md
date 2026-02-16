@@ -63,7 +63,7 @@ kubectl apply -f https://github.com/agentic-layer/tool-gateway-kgateway/releases
 
 The Tool Gateway kgateway Operator creates and manages Gateway API resources based on ToolGateway and ToolServer custom resources:
 
-1. **Gateway Creation**: When a ToolGateway is created, the operator creates a dedicated Gateway (named `{toolgateway-name}-proxy`) in the same namespace as the ToolGateway with HTTP listener on port 80. Each ToolGateway has its own Gateway instance.
+1. **Gateway Creation**: When a ToolGateway is created, the operator creates a dedicated Gateway with the same name in the same namespace as the ToolGateway with HTTP listener on port 80. Each ToolGateway has its own Gateway instance.
 
 2. **ToolServer Integration**: For each ToolServer resource, the operator creates:
    - **AgentgatewayBackend**: Configures the MCP backend connection to the ToolServer
@@ -76,7 +76,7 @@ The Tool Gateway kgateway Operator creates and manages Gateway API resources bas
 ```
 ToolGateway (CRD)
     ↓
-{toolgateway-name}-proxy (Gateway in same namespace)
+Gateway (same name and namespace)
     ↓
 HTTPRoute (Gateway API) → AgentgatewayBackend → ToolServer
 ```
@@ -111,7 +111,6 @@ Before creating a ToolGateway, ensure you have:
 
 1. **Gateway API CRDs** installed in your cluster
 2. **kgateway with agentgateway support** installed (see [Getting Started](#getting-started))
-3. **ToolGatewayClass** with `agentgateway` controller (automatically created by this operator)
 
 ### ToolGateway Configuration
 
@@ -127,7 +126,7 @@ spec:
   toolGatewayClassName: kgateway  # Optional: uses default if not specified
 ```
 
-This will create a `my-tool-gateway-proxy` Gateway in the `my-namespace` namespace.
+This will create a `my-tool-gateway` Gateway in the `my-namespace` namespace.
 
 ### ToolServer Configuration
 
@@ -158,7 +157,7 @@ Once deployed, tools are accessible via the ToolGateway's Gateway:
 
 ```shell
 # Get the Gateway service endpoint (example for 'my-tool-gateway')
-kubectl get svc -n my-namespace | grep my-tool-gateway-proxy
+kubectl get svc -n my-namespace | grep my-tool-gateway
 
 # Access your tool via the gateway
 curl http://<gateway-endpoint>/mcp
