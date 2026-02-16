@@ -12,17 +12,6 @@ rules:
   - create
   - patch
 - apiGroups:
-  - ""
-  resources:
-  - namespaces
-  verbs:
-  - create
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
   - agentgateway.dev
   resources:
   - agentgatewaybackends

@@ -104,7 +104,7 @@ spec:
 
 			By("Fetching Gateway status")
 			gatewayOutput, err := utils.Run(exec.Command("kubectl", "get", "gateway",
-				"agentgateway-proxy", "-n", "agentgateway-system", "-o", "yaml"))
+				"test-tool-gateway-proxy", "-n", testNamespace, "-o", "yaml"))
 			if err == nil {
 				_, _ = fmt.Fprintf(GinkgoWriter, "Gateway status:\n%s", gatewayOutput)
 			} else {
@@ -139,18 +139,18 @@ spec:
 		_, err := utils.Run(exec.Command("kubectl", "apply", "-f", toolGatewayYAML))
 		Expect(err).NotTo(HaveOccurred(), "Failed to create ToolGateway")
 
-		By("waiting for agentgateway-proxy Gateway to be created")
+		By("waiting for test-tool-gateway-proxy Gateway to be created")
 		Eventually(func(g Gomega) {
 			output, err := utils.Run(exec.Command("kubectl", "get", "gateway",
-				"agentgateway-proxy", "-n", "agentgateway-system", "-o", "jsonpath={.metadata.name}"))
+				"test-tool-gateway-proxy", "-n", testNamespace, "-o", "jsonpath={.metadata.name}"))
 			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(output).To(Equal("agentgateway-proxy"))
+			g.Expect(output).To(Equal("test-tool-gateway-proxy"))
 		}).Should(Succeed())
 
 		By("verifying Gateway has correct gatewayClassName")
 		Eventually(func(g Gomega) {
 			output, err := utils.Run(exec.Command("kubectl", "get", "gateway",
-				"agentgateway-proxy", "-n", "agentgateway-system",
+				"test-tool-gateway-proxy", "-n", testNamespace,
 				"-o", "jsonpath={.spec.gatewayClassName}"))
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(output).To(Equal("agentgateway"))
@@ -159,7 +159,7 @@ spec:
 		By("verifying Gateway has HTTP listener on port 80")
 		Eventually(func(g Gomega) {
 			output, err := utils.Run(exec.Command("kubectl", "get", "gateway",
-				"agentgateway-proxy", "-n", "agentgateway-system",
+				"test-tool-gateway-proxy", "-n", testNamespace,
 				"-o", "jsonpath={.spec.listeners[0].port}"))
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(output).To(Equal("80"))
@@ -201,7 +201,7 @@ spec:
 				testToolServerName, "-n", testNamespace,
 				"-o", "jsonpath={.spec.parentRefs[0].name}"))
 			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(output).To(Equal("agentgateway-proxy"))
+			g.Expect(output).To(Equal("test-tool-gateway-proxy"))
 		}).Should(Succeed())
 
 		By("verifying HTTPRoute has correct backend reference")

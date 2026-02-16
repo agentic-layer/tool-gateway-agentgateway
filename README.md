@@ -63,7 +63,7 @@ kubectl apply -f https://github.com/agentic-layer/tool-gateway-kgateway/releases
 
 The Tool Gateway kgateway Operator creates and manages Gateway API resources based on ToolGateway and ToolServer custom resources:
 
-1. **Gateway Creation**: When a ToolGateway is created, the operator creates an `agentgateway-proxy` Gateway in the `agentgateway-system` namespace with HTTP listener on port 80.
+1. **Gateway Creation**: When a ToolGateway is created, the operator creates a dedicated Gateway (named `{toolgateway-name}-proxy`) in the same namespace as the ToolGateway with HTTP listener on port 80. Each ToolGateway has its own Gateway instance.
 
 2. **ToolServer Integration**: For each ToolServer resource, the operator creates:
    - **AgentgatewayBackend**: Configures the MCP backend connection to the ToolServer
@@ -76,7 +76,7 @@ The Tool Gateway kgateway Operator creates and manages Gateway API resources bas
 ```
 ToolGateway (CRD)
     ↓
-agentgateway-proxy (Gateway)
+{toolgateway-name}-proxy (Gateway in same namespace)
     ↓
 HTTPRoute (Gateway API) → AgentgatewayBackend → ToolServer
 ```
@@ -127,7 +127,7 @@ spec:
   toolGatewayClassName: kgateway  # Optional: uses default if not specified
 ```
 
-This will create an `agentgateway-proxy` Gateway in the `agentgateway-system` namespace.
+This will create a `my-tool-gateway-proxy` Gateway in the `my-namespace` namespace.
 
 ### ToolServer Configuration
 
@@ -154,11 +154,11 @@ The operator will automatically create:
 
 ### Accessing Your Tools
 
-Once deployed, tools are accessible via the agentgateway-proxy Gateway:
+Once deployed, tools are accessible via the ToolGateway's Gateway:
 
 ```shell
-# Get the Gateway service endpoint
-kubectl get svc -n agentgateway-system
+# Get the Gateway service endpoint (example for 'my-tool-gateway')
+kubectl get svc -n my-namespace | grep my-tool-gateway-proxy
 
 # Access your tool via the gateway
 curl http://<gateway-endpoint>/mcp
