@@ -171,7 +171,7 @@ func (r *ToolGatewayReconciler) getToolServers(ctx context.Context) ([]*agentrun
 
 // getGatewayName returns the name of the Gateway for a ToolGateway
 func getGatewayName(toolGateway *agentruntimev1alpha1.ToolGateway) string {
-	return toolGateway.Name + "-proxy"
+	return toolGateway.Name
 }
 
 // ensureGateway creates or updates the Gateway for this ToolGateway
@@ -246,58 +246,38 @@ func (r *ToolGatewayReconciler) ensureAgentgatewayBackend(
 ) error {
 	log := logf.FromContext(ctx)
 
-	// Create AgentgatewayBackend as unstructured since we don't have the CRD types
-	backend := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "agentgateway.dev/v1alpha1",
-			"kind":       "AgentgatewayBackend",
-			"metadata": map[string]interface{}{
-				"name":      toolServer.Name,
-				"namespace": toolServer.Namespace,
-			},
-			"spec": map[string]interface{}{
-				"mcp": map[string]interface{}{
-					"targets": []interface{}{
-						map[string]interface{}{
-							"name": "mcp-target",
-							"static": map[string]interface{}{
-								"host": fmt.Sprintf("%s.%s.svc.cluster.local",
-									toolServer.Name, toolServer.Namespace),
-								"port":     toolServer.Spec.Port,
-								"protocol": "StreamableHTTP",
-							},
-						},
+	// Create AgentgatewayBackend as unstructured since CRD types are not yet available as Go module
+	backend := &unstructured.Unstructured{}
+	backend.SetAPIVersion("agentgateway.dev/v1alpha1")
+	backend.SetKind("AgentgatewayBackend")
+	backend.SetName(toolServer.Name)
+	backend.SetNamespace(toolServer.Namespace)
+
+	op, err := controllerutil.CreateOrUpdate(ctx, r.Client, backend, func() error {
+		// Set the backend specification
+		if err := unstructured.SetNestedMap(backend.Object, map[string]interface{}{
+			"targets": []interface{}{
+				map[string]interface{}{
+					"name": "mcp-target",
+					"static": map[string]interface{}{
+						"host": fmt.Sprintf("%s.%s.svc.cluster.local",
+							toolServer.Name, toolServer.Namespace),
+						"port":     int64(toolServer.Spec.Port),
+						"protocol": "StreamableHTTP",
 					},
 				},
 			},
-		},
+		}, "spec", "mcp"); err != nil {
+			return fmt.Errorf("failed to set backend spec: %w", err)
+		}
+		return nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to create or update AgentgatewayBackend: %w", err)
 	}
 
-	// Try to get existing backend
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(backend.GroupVersionKind())
-	err := r.Get(ctx, types.NamespacedName{
-		Name:      toolServer.Name,
-		Namespace: toolServer.Namespace,
-	}, existing)
-
-	if err != nil && apierrors.IsNotFound(err) {
-		// Create new backend
-		if err := r.Create(ctx, backend); err != nil {
-			return fmt.Errorf("failed to create AgentgatewayBackend: %w", err)
-		}
-		log.Info("Created AgentgatewayBackend", "name", toolServer.Name, "namespace", toolServer.Namespace)
-	} else if err != nil {
-		return fmt.Errorf("failed to get AgentgatewayBackend: %w", err)
-	} else {
-		// Update existing backend
-		existing.Object["spec"] = backend.Object["spec"]
-		if err := r.Update(ctx, existing); err != nil {
-			return fmt.Errorf("failed to update AgentgatewayBackend: %w", err)
-		}
-		log.Info("Updated AgentgatewayBackend", "name", toolServer.Name, "namespace", toolServer.Namespace)
-	}
-
+	log.Info("AgentgatewayBackend reconciled", "operation", op, "name", toolServer.Name, "namespace", toolServer.Namespace)
 	return nil
 }
 
