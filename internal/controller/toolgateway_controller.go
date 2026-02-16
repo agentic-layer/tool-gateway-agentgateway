@@ -169,19 +169,13 @@ func (r *ToolGatewayReconciler) getToolServers(ctx context.Context) ([]*agentrun
 	return toolServers, nil
 }
 
-// getGatewayName returns the name of the Gateway for a ToolGateway
-func getGatewayName(toolGateway *agentruntimev1alpha1.ToolGateway) string {
-	return toolGateway.Name
-}
-
 // ensureGateway creates or updates the Gateway for this ToolGateway
 func (r *ToolGatewayReconciler) ensureGateway(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway) error {
 	log := logf.FromContext(ctx)
 
-	gatewayName := getGatewayName(toolGateway)
 	gateway := &gatewayv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      gatewayName,
+			Name:      toolGateway.Name,
 			Namespace: toolGateway.Namespace,
 		},
 	}
@@ -315,12 +309,11 @@ func (r *ToolGatewayReconciler) ensureHTTPRoute(
 
 		// Set the route specification
 		pathType := gatewayv1.PathMatchPathPrefix
-		gatewayName := getGatewayName(toolGateway)
 		route.Spec = gatewayv1.HTTPRouteSpec{
 			CommonRouteSpec: gatewayv1.CommonRouteSpec{
 				ParentRefs: []gatewayv1.ParentReference{
 					{
-						Name:      gatewayv1.ObjectName(gatewayName),
+						Name:      gatewayv1.ObjectName(toolGateway.Name),
 						Namespace: ptr.To(gatewayv1.Namespace(toolGateway.Namespace)),
 					},
 				},
