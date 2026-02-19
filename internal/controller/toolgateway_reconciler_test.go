@@ -84,6 +84,14 @@ var _ = Describe("ToolGateway Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, toolGateway)).To(Succeed())
 
+			// Wait for ToolGateway to be available
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Name:      "test-basic-gateway",
+					Namespace: "default",
+				}, &agentruntimev1alpha1.ToolGateway{})
+			}, "10s", "1s").Should(Succeed())
+
 			// Reconcile
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{
@@ -151,6 +159,14 @@ var _ = Describe("ToolGateway Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, toolGateway)).To(Succeed())
 
+			// Wait for ToolGateway to be available
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Name:      "test-update-gateway",
+					Namespace: "default",
+				}, &agentruntimev1alpha1.ToolGateway{})
+			}, "10s", "1s").Should(Succeed())
+
 			// Initial reconcile
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{
@@ -162,10 +178,12 @@ var _ = Describe("ToolGateway Controller", func() {
 
 			// Verify Gateway was created
 			gateway := &gatewayv1.Gateway{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{
-				Name:      "test-update-gateway",
-				Namespace: "default",
-			}, gateway)).To(Succeed())
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Name:      "test-update-gateway",
+					Namespace: "default",
+				}, gateway)
+			}, "10s", "1s").Should(Succeed())
 
 			// Second reconcile should still succeed
 			_, err = reconciler.Reconcile(ctx, reconcile.Request{
