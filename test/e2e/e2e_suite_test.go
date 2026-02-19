@@ -49,7 +49,7 @@ const agentRuntimeWebhookValidatingConfiguration = "agent-runtime-operator-valid
 
 // agentRuntimeInstallUrl is the URL to install the Agent Runtime Operator
 const agentRuntimeInstallUrl = "https://github.com/agentic-layer/agent-runtime-operator/releases/" +
-	"download/v0.13.0/install.yaml"
+	"download/v0.18.1/install.yaml"
 
 var (
 	// Optional Environment Variables:
