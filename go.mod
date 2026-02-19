@@ -3,7 +3,7 @@ module github.com/agentic-layer/tool-gateway-kgateway
 go 1.24.0
 
 require (
-	github.com/agentic-layer/agent-runtime-operator v0.18.0
+	github.com/agentic-layer/agent-runtime-operator v0.18.1
 	github.com/onsi/ginkgo/v2 v2.28.1
 	github.com/onsi/gomega v1.39.1
 	k8s.io/api v0.34.3
@@ -17,7 +17,6 @@ require (
 require (
 	cel.dev/expr v0.24.0 // indirect
 	github.com/Masterminds/semver/v3 v3.4.0 // indirect
-	github.com/agentgateway/agentgateway v0.12.0 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect

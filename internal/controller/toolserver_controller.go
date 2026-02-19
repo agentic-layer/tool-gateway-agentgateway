@@ -71,15 +71,8 @@ func (r *ToolServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		"name", toolServer.Name,
 		"namespace", toolServer.Namespace)
 
-	// Validate ToolServer
-	if err := r.validateToolServer(&toolServer); err != nil {
-		log.Error(err, "Invalid ToolServer")
-		r.Recorder.Event(&toolServer, "Warning", "ValidationFailed", err.Error())
-		return ctrl.Result{}, nil // Don't requeue for validation errors
-	}
-
 	// Find the ToolGateway to use
-	toolGateway, err := r.findToolGateway(ctx)
+	toolGateway, err := r.findToolGateway(ctx, &toolServer)
 	if err != nil {
 		log.Error(err, "Failed to find ToolGateway")
 		return ctrl.Result{}, err
@@ -106,29 +99,35 @@ func (r *ToolServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	return ctrl.Result{}, nil
 }
 
-// validateToolServer validates a ToolServer resource
-func (r *ToolServerReconciler) validateToolServer(toolServer *agentruntimev1alpha1.ToolServer) error {
-	if toolServer.Spec.Port <= 0 || toolServer.Spec.Port > 65535 {
-		return fmt.Errorf("invalid port number: %d, must be between 1 and 65535", toolServer.Spec.Port)
-	}
-
-	if toolServer.Name == "" || toolServer.Namespace == "" {
-		return fmt.Errorf("toolServer name and namespace are required")
-	}
-
-	// Validate DNS-1123 subdomain format for name length
-	if len(toolServer.Name) > 253 {
-		return fmt.Errorf("toolServer name too long: %s (max 253 characters)", toolServer.Name)
-	}
-
-	return nil
-}
-
 // findToolGateway finds a ToolGateway to use for this ToolServer
-// For now, we assume there is only one ToolGateway and use it
-func (r *ToolServerReconciler) findToolGateway(ctx context.Context) (*agentruntimev1alpha1.ToolGateway, error) {
+// It uses the ToolGatewayRef from the ToolServer spec if specified,
+// otherwise tries to find a default ToolGateway in the cluster
+func (r *ToolServerReconciler) findToolGateway(ctx context.Context, toolServer *agentruntimev1alpha1.ToolServer) (*agentruntimev1alpha1.ToolGateway, error) {
 	log := logf.FromContext(ctx)
 
+	// If ToolGatewayRef is specified, use it
+	if toolServer.Spec.ToolGatewayRef != nil {
+		ref := toolServer.Spec.ToolGatewayRef
+
+		// Default namespace to ToolServer's namespace if not specified
+		namespace := ref.Namespace
+		if namespace == "" {
+			namespace = toolServer.Namespace
+		}
+
+		toolGateway := &agentruntimev1alpha1.ToolGateway{}
+		if err := r.Get(ctx, client.ObjectKey{
+			Name:      ref.Name,
+			Namespace: namespace,
+		}, toolGateway); err != nil {
+			return nil, fmt.Errorf("failed to get referenced ToolGateway %s/%s: %w", namespace, ref.Name, err)
+		}
+
+		log.Info("Using referenced ToolGateway", "name", toolGateway.Name, "namespace", toolGateway.Namespace)
+		return toolGateway, nil
+	}
+
+	// If no ToolGatewayRef specified, try to find a default ToolGateway
 	var toolGatewayList agentruntimev1alpha1.ToolGatewayList
 	if err := r.List(ctx, &toolGatewayList); err != nil {
 		return nil, fmt.Errorf("failed to list ToolGateways: %w", err)
@@ -139,8 +138,8 @@ func (r *ToolServerReconciler) findToolGateway(ctx context.Context) (*agentrunti
 		return nil, nil
 	}
 
-	// For now, just use the first one
-	// TODO: Allow ToolServer to specify which ToolGateway to use
+	// Use the first one as default
+	log.Info("Using default ToolGateway", "name", toolGatewayList.Items[0].Name, "namespace", toolGatewayList.Items[0].Namespace)
 	return &toolGatewayList.Items[0], nil
 }
 
