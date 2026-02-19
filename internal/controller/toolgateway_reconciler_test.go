@@ -17,127 +17,202 @@ limitations under the License.
 package controller
 
 import (
-	"time"
+	"context"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	agentruntimev1alpha1 "github.com/agentic-layer/agent-runtime-operator/api/v1alpha1"
 )
 
-var _ = Describe("ToolGateway Reconciler", func() {
-	const (
-		toolGatewayName      = "test-tool-gateway"
-		toolGatewayNamespace = "default"
-		toolGatewayClassName = "kgateway"
-		timeout              = time.Second * 10
-		interval             = time.Millisecond * 250
-	)
+var _ = Describe("ToolGateway Controller", func() {
+	ctx := context.Background()
+	var reconciler *ToolGatewayReconciler
 
 	BeforeEach(func() {
-		By("Creating a ToolGatewayClass")
-		toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: toolGatewayClassName,
-			},
-			Spec: agentruntimev1alpha1.ToolGatewayClassSpec{
-				Controller: "runtime.agentic-layer.ai/tool-gateway-kgateway-controller",
-			},
+		reconciler = &ToolGatewayReconciler{
+			Client: k8sClient,
+			Scheme: k8sClient.Scheme(),
 		}
-		Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
 	})
 
 	AfterEach(func() {
-		By("Cleaning up the ToolGatewayClass")
-		toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{}
-		err := k8sClient.Get(ctx, types.NamespacedName{Name: toolGatewayClassName}, toolGatewayClass)
-		if err == nil {
-			Expect(k8sClient.Delete(ctx, toolGatewayClass)).To(Succeed())
+		// Clean up all tool gateways in the default namespace after each test
+		toolGatewayList := &agentruntimev1alpha1.ToolGatewayList{}
+		Expect(k8sClient.List(ctx, toolGatewayList, &client.ListOptions{Namespace: "default"})).To(Succeed())
+		for i := range toolGatewayList.Items {
+			_ = k8sClient.Delete(ctx, &toolGatewayList.Items[i])
+		}
+
+		// Clean up tool gateway classes
+		toolGatewayClassList := &agentruntimev1alpha1.ToolGatewayClassList{}
+		Expect(k8sClient.List(ctx, toolGatewayClassList)).To(Succeed())
+		for i := range toolGatewayClassList.Items {
+			_ = k8sClient.Delete(ctx, &toolGatewayClassList.Items[i])
 		}
 	})
 
-	Context("When reconciling a ToolGateway", func() {
-		AfterEach(func() {
-			// Clean up all ToolGateways in default namespace
-			toolGatewayList := &agentruntimev1alpha1.ToolGatewayList{}
-			Expect(k8sClient.List(ctx, toolGatewayList, client.InNamespace(toolGatewayNamespace))).To(Succeed())
-			for _, tg := range toolGatewayList.Items {
-				Expect(k8sClient.Delete(ctx, &tg)).To(Succeed())
+	Describe("Reconcile", func() {
+		It("should successfully reconcile a basic ToolGateway", func() {
+			// Create ToolGatewayClass
+			toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-class",
+				},
+				Spec: agentruntimev1alpha1.ToolGatewayClassSpec{
+					Controller: "runtime.agentic-layer.ai/tool-gateway-kgateway-controller",
+				},
 			}
+			Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
 
-			// Wait for all Gateways to be deleted
-			Eventually(func() int {
-				gatewayList := &gatewayv1.GatewayList{}
-				_ = k8sClient.List(ctx, gatewayList, client.InNamespace(toolGatewayNamespace))
-				return len(gatewayList.Items)
-			}, timeout, interval).Should(Equal(0))
-		})
-
-		It("should create a Gateway resource", func() {
-			By("Creating a ToolGateway resource")
+			// Create ToolGateway
 			toolGateway := &agentruntimev1alpha1.ToolGateway{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      toolGatewayName,
-					Namespace: toolGatewayNamespace,
+					Name:      "test-basic-gateway",
+					Namespace: "default",
 				},
 				Spec: agentruntimev1alpha1.ToolGatewaySpec{
-					ToolGatewayClassName: toolGatewayClassName,
+					ToolGatewayClassName: "test-class",
 				},
 			}
 			Expect(k8sClient.Create(ctx, toolGateway)).To(Succeed())
 
-			By("Checking that the Gateway resource is created")
-			gateway := &gatewayv1.Gateway{}
-			Eventually(func() bool {
-				err := k8sClient.Get(ctx, types.NamespacedName{
-					Name:      toolGatewayName,
-					Namespace: toolGatewayNamespace,
-				}, gateway)
-				return err == nil
-			}, timeout, interval).Should(BeTrue())
+			// Reconcile
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "test-basic-gateway",
+					Namespace: "default",
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
 
-			By("Verifying the Gateway configuration")
+			// Verify Gateway was created
+			gateway := &gatewayv1.Gateway{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      "test-basic-gateway",
+				Namespace: "default",
+			}, gateway)).To(Succeed())
+
+			// Verify Gateway configuration
 			Expect(gateway.Spec.GatewayClassName).To(Equal(gatewayv1.ObjectName("agentgateway")))
 			Expect(gateway.Spec.Listeners).To(HaveLen(1))
 			Expect(gateway.Spec.Listeners[0].Protocol).To(Equal(gatewayv1.HTTPProtocolType))
 			Expect(gateway.Spec.Listeners[0].Port).To(Equal(gatewayv1.PortNumber(80)))
+			Expect(gateway.Spec.Listeners[0].AllowedRoutes).NotTo(BeNil())
+			Expect(gateway.Spec.Listeners[0].AllowedRoutes.Namespaces.From).NotTo(BeNil())
+			Expect(*gateway.Spec.Listeners[0].AllowedRoutes.Namespaces.From).To(Equal(gatewayv1.NamespacesFromAll))
 
-			By("Verifying the Gateway has owner reference")
+			// Verify owner reference
 			Expect(gateway.OwnerReferences).To(HaveLen(1))
-			Expect(gateway.OwnerReferences[0].Name).To(Equal(toolGatewayName))
+			Expect(gateway.OwnerReferences[0].Name).To(Equal("test-basic-gateway"))
 			Expect(gateway.OwnerReferences[0].Kind).To(Equal("ToolGateway"))
 		})
 
-		It("should update the Gateway when ToolGateway is updated", func() {
-			By("Creating a ToolGateway resource")
+		It("should return nil when ToolGateway is not found", func() {
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "nonexistent-gateway",
+					Namespace: "default",
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should update Gateway when ToolGateway is updated", func() {
+			// Create ToolGatewayClass
+			toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "update-test-class",
+				},
+				Spec: agentruntimev1alpha1.ToolGatewayClassSpec{
+					Controller: "runtime.agentic-layer.ai/tool-gateway-kgateway-controller",
+				},
+			}
+			Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
+
+			// Create ToolGateway
 			toolGateway := &agentruntimev1alpha1.ToolGateway{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      toolGatewayName + "-update",
-					Namespace: toolGatewayNamespace,
+					Name:      "test-update-gateway",
+					Namespace: "default",
 				},
 				Spec: agentruntimev1alpha1.ToolGatewaySpec{
-					ToolGatewayClassName: toolGatewayClassName,
+					ToolGatewayClassName: "update-test-class",
 				},
 			}
 			Expect(k8sClient.Create(ctx, toolGateway)).To(Succeed())
 
-			By("Waiting for the Gateway to be created")
-			gateway := &gatewayv1.Gateway{}
-			Eventually(func() bool {
-				err := k8sClient.Get(ctx, types.NamespacedName{
-					Name:      toolGatewayName + "-update",
-					Namespace: toolGatewayNamespace,
-				}, gateway)
-				return err == nil
-			}, timeout, interval).Should(BeTrue())
+			// Initial reconcile
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "test-update-gateway",
+					Namespace: "default",
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
 
-			By("Verifying reconciliation maintains Gateway configuration")
-			// The reconciler should maintain the Gateway in desired state
-			Expect(gateway.Spec.GatewayClassName).To(Equal(gatewayv1.ObjectName("agentgateway")))
+			// Verify Gateway was created
+			gateway := &gatewayv1.Gateway{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      "test-update-gateway",
+				Namespace: "default",
+			}, gateway)).To(Succeed())
+
+			// Second reconcile should still succeed
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "test-update-gateway",
+					Namespace: "default",
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should not reconcile ToolGateway with wrong controller", func() {
+			// Create ToolGatewayClass with different controller
+			toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "wrong-controller-class",
+				},
+				Spec: agentruntimev1alpha1.ToolGatewayClassSpec{
+					Controller: "other-controller",
+				},
+			}
+			Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
+
+			// Create ToolGateway
+			toolGateway := &agentruntimev1alpha1.ToolGateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-wrong-controller",
+					Namespace: "default",
+				},
+				Spec: agentruntimev1alpha1.ToolGatewaySpec{
+					ToolGatewayClassName: "wrong-controller-class",
+				},
+			}
+			Expect(k8sClient.Create(ctx, toolGateway)).To(Succeed())
+
+			// Reconcile - should succeed but not create Gateway
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "test-wrong-controller",
+					Namespace: "default",
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify Gateway was NOT created
+			gateway := &gatewayv1.Gateway{}
+			err = k8sClient.Get(ctx, types.NamespacedName{
+				Name:      "test-wrong-controller",
+				Namespace: "default",
+			}, gateway)
+			Expect(err).To(HaveOccurred())
 		})
 	})
 })
