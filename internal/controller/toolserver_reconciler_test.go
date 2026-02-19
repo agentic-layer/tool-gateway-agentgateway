@@ -67,59 +67,41 @@ var _ = Describe("ToolServer Controller", func() {
 		}
 	})
 
+	// Helper function to create test setup
+	setupTestGatewayAndClass := func(className, gatewayName string) {
+		toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: className,
+			},
+			Spec: agentruntimev1alpha1.ToolGatewayClassSpec{
+				Controller: "runtime.agentic-layer.ai/tool-gateway-kgateway-controller",
+			},
+		}
+		Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
+
+		toolGateway := &agentruntimev1alpha1.ToolGateway{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      gatewayName,
+				Namespace: "default",
+			},
+			Spec: agentruntimev1alpha1.ToolGatewaySpec{
+				ToolGatewayClassName: className,
+			},
+		}
+		Expect(k8sClient.Create(ctx, toolGateway)).To(Succeed())
+
+		Eventually(func() error {
+			return k8sClient.Get(ctx, types.NamespacedName{
+				Name:      gatewayName,
+				Namespace: "default",
+			}, &agentruntimev1alpha1.ToolGateway{})
+		}, "10s", "1s").Should(Succeed())
+	}
+
 	Describe("Reconcile", func() {
-		It("should successfully reconcile a basic ToolServer", func() {
-			// Create ToolGatewayClass
-			toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-class",
-				},
-				Spec: agentruntimev1alpha1.ToolGatewayClassSpec{
-					Controller: "runtime.agentic-layer.ai/tool-gateway-kgateway-controller",
-				},
-			}
-			Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
+		It("should create HTTPRoute for HTTP transport", func() {
+			setupTestGatewayAndClass("test-class", "test-gateway")
 
-			// Create ToolGateway
-			toolGateway := &agentruntimev1alpha1.ToolGateway{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-gateway",
-					Namespace: "default",
-				},
-				Spec: agentruntimev1alpha1.ToolGatewaySpec{
-					ToolGatewayClassName: "test-class",
-				},
-			}
-			Expect(k8sClient.Create(ctx, toolGateway)).To(Succeed())
-
-			// Wait for ToolGateway to be available
-			Eventually(func() error {
-				return k8sClient.Get(ctx, types.NamespacedName{
-					Name:      "test-gateway",
-					Namespace: "default",
-				}, &agentruntimev1alpha1.ToolGateway{})
-			}, "10s", "1s").Should(Succeed())
-
-			// Create Gateway (normally done by ToolGatewayReconciler)
-			gateway := &gatewayv1.Gateway{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-gateway",
-					Namespace: "default",
-				},
-				Spec: gatewayv1.GatewaySpec{
-					GatewayClassName: "agentgateway",
-					Listeners: []gatewayv1.Listener{
-						{
-							Name:     "sse",
-							Protocol: gatewayv1.HTTPProtocolType,
-							Port:     80,
-						},
-					},
-				},
-			}
-			Expect(k8sClient.Create(ctx, gateway)).To(Succeed())
-
-			// Create ToolServer
 			toolServer := &agentruntimev1alpha1.ToolServer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-tool-server",
@@ -129,7 +111,7 @@ var _ = Describe("ToolServer Controller", func() {
 					Image:         "test-image:latest",
 					Port:          8000,
 					Protocol:      "mcp",
-					TransportType: "sse",
+					TransportType: "http",
 					ToolGatewayRef: &corev1.ObjectReference{
 						Name:      "test-gateway",
 						Namespace: "default",
@@ -138,7 +120,6 @@ var _ = Describe("ToolServer Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, toolServer)).To(Succeed())
 
-			// Wait for ToolServer to be available
 			Eventually(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{
 					Name:      "test-tool-server",
@@ -146,91 +127,36 @@ var _ = Describe("ToolServer Controller", func() {
 				}, &agentruntimev1alpha1.ToolServer{})
 			}, "10s", "1s").Should(Succeed())
 
-			// Reconcile
-			// Note: AgentgatewayBackend CRD verification is not possible because the CRDs
-			// come from the agentgateway project (Rust-based) and are not available as Go
-			// modules for envtest. The reconciler will fail when trying to create the
-			// AgentgatewayBackend, but it should still create the HTTPRoute first.
-			// E2E tests with full kgateway installation will validate AgentgatewayBackend creation.
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      "test-tool-server",
 					Namespace: "default",
 				},
 			})
-			// Expect error due to missing AgentgatewayBackend CRD
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("AgentgatewayBackend"))
-
-			// Note: HTTPRoute and AgentgatewayBackend creation cannot be verified in this test
-			// because AgentgatewayBackend CRDs come from the agentgateway project (Rust-based)
-			// and are not available as Go modules for envtest. The reconciler fails before
-			// creating the HTTPRoute. E2E tests with full kgateway installation will validate
-			// the complete resource creation.
-		})
-
-		It("should return nil when ToolServer is not found", func() {
-			_, err := reconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: types.NamespacedName{
-					Name:      "nonexistent-toolserver",
-					Namespace: "default",
-				},
-			})
 			Expect(err).NotTo(HaveOccurred())
-		})
 
-		It("should use SSE path for SSE protocol", func() {
-			// Create ToolGatewayClass
-			toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "sse-test-class",
-				},
-				Spec: agentruntimev1alpha1.ToolGatewayClassSpec{
-					Controller: "runtime.agentic-layer.ai/tool-gateway-kgateway-controller",
-				},
-			}
-			Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
-
-			// Create ToolGateway
-			toolGateway := &agentruntimev1alpha1.ToolGateway{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "sse-test-gateway",
-					Namespace: "default",
-				},
-				Spec: agentruntimev1alpha1.ToolGatewaySpec{
-					ToolGatewayClassName: "sse-test-class",
-				},
-			}
-			Expect(k8sClient.Create(ctx, toolGateway)).To(Succeed())
-
-			// Wait for ToolGateway to be available
+			httpRoute := &gatewayv1.HTTPRoute{}
 			Eventually(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{
-					Name:      "sse-test-gateway",
+					Name:      "test-tool-server",
 					Namespace: "default",
-				}, &agentruntimev1alpha1.ToolGateway{})
+				}, httpRoute)
 			}, "10s", "1s").Should(Succeed())
 
-			// Create Gateway
-			gateway := &gatewayv1.Gateway{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "sse-test-gateway",
-					Namespace: "default",
-				},
-				Spec: gatewayv1.GatewaySpec{
-					GatewayClassName: "agentgateway",
-					Listeners: []gatewayv1.Listener{
-						{
-							Name:     "sse",
-							Protocol: gatewayv1.HTTPProtocolType,
-							Port:     80,
-						},
-					},
-				},
-			}
-			Expect(k8sClient.Create(ctx, gateway)).To(Succeed())
+			Expect(httpRoute.Spec.ParentRefs).To(HaveLen(1))
+			Expect(httpRoute.Spec.ParentRefs[0].Name).To(Equal(gatewayv1.ObjectName("test-gateway")))
+			Expect(httpRoute.Spec.Rules).To(HaveLen(1))
+			Expect(httpRoute.Spec.Rules[0].Matches).To(HaveLen(1))
+			Expect(httpRoute.Spec.Rules[0].Matches[0].Path.Value).To(Equal(stringPtr("/mcp")))
 
-			// Create ToolServer with SSE transport
+			Expect(httpRoute.OwnerReferences).To(HaveLen(1))
+			Expect(httpRoute.OwnerReferences[0].Name).To(Equal("test-tool-server"))
+			Expect(httpRoute.OwnerReferences[0].Kind).To(Equal("ToolServer"))
+		})
+
+		It("should create HTTPRoute for SSE transport with /sse path", func() {
+			setupTestGatewayAndClass("sse-test-class", "sse-test-gateway")
+
 			toolServer := &agentruntimev1alpha1.ToolServer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-sse-server",
@@ -249,7 +175,6 @@ var _ = Describe("ToolServer Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, toolServer)).To(Succeed())
 
-			// Wait for ToolServer to be available
 			Eventually(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{
 					Name:      "test-sse-server",
@@ -257,24 +182,33 @@ var _ = Describe("ToolServer Controller", func() {
 				}, &agentruntimev1alpha1.ToolServer{})
 			}, "10s", "1s").Should(Succeed())
 
-			// Reconcile
-			// Note: AgentgatewayBackend CRD is not available in envtest because it comes
-			// from the agentgateway project (Rust-based) and is not available as a Go module.
-			// The reconciliation will fail when attempting to create AgentgatewayBackend.
-			// E2E tests with full kgateway installation will validate the complete flow.
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      "test-sse-server",
 					Namespace: "default",
 				},
 			})
-			// Expect error due to missing AgentgatewayBackend CRD
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("AgentgatewayBackend"))
+			Expect(err).NotTo(HaveOccurred())
 
-			// Note: HTTPRoute path verification is not possible because the reconciler
-			// fails before creating the HTTPRoute due to missing AgentgatewayBackend CRD.
-			// E2E tests with full kgateway installation will validate the /sse path.
+			httpRoute := &gatewayv1.HTTPRoute{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Name:      "test-sse-server",
+					Namespace: "default",
+				}, httpRoute)
+			}, "10s", "1s").Should(Succeed())
+
+			Expect(httpRoute.Spec.Rules[0].Matches[0].Path.Value).To(Equal(stringPtr("/sse")))
+		})
+
+		It("should return nil when ToolServer is not found", func() {
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "nonexistent-toolserver",
+					Namespace: "default",
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
 		})
 	})
 
@@ -311,7 +245,6 @@ var _ = Describe("ToolServer Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, toolGateway)).To(Succeed())
 
-			// Wait for ToolGateway to be available
 			Eventually(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{
 					Name:      "find-me-gateway",
@@ -379,7 +312,6 @@ var _ = Describe("ToolServer Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, toolGateway)).To(Succeed())
 
-			// Wait for ToolGateway to be available
 			Eventually(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{
 					Name:      "default-gateway",
@@ -409,3 +341,7 @@ var _ = Describe("ToolServer Controller", func() {
 		})
 	})
 })
+
+func stringPtr(s string) *string {
+	return &s
+}

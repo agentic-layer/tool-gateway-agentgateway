@@ -60,8 +60,7 @@ var _ = Describe("ToolGateway Controller", func() {
 	})
 
 	Describe("Reconcile", func() {
-		It("should successfully reconcile a basic ToolGateway", func() {
-			// Create ToolGatewayClass
+		It("should create ToolGatewayClass", func() {
 			toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "test-class",
@@ -71,20 +70,30 @@ var _ = Describe("ToolGateway Controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
+		})
 
-			// Create ToolGateway
+		It("should create ToolGateway and reconcile to create Gateway", func() {
+			toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-class-2",
+				},
+				Spec: agentruntimev1alpha1.ToolGatewayClassSpec{
+					Controller: "runtime.agentic-layer.ai/tool-gateway-kgateway-controller",
+				},
+			}
+			Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
+
 			toolGateway := &agentruntimev1alpha1.ToolGateway{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-basic-gateway",
 					Namespace: "default",
 				},
 				Spec: agentruntimev1alpha1.ToolGatewaySpec{
-					ToolGatewayClassName: "test-class",
+					ToolGatewayClassName: "test-class-2",
 				},
 			}
 			Expect(k8sClient.Create(ctx, toolGateway)).To(Succeed())
 
-			// Wait for ToolGateway to be available
 			Eventually(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{
 					Name:      "test-basic-gateway",
@@ -92,7 +101,6 @@ var _ = Describe("ToolGateway Controller", func() {
 				}, &agentruntimev1alpha1.ToolGateway{})
 			}, "10s", "1s").Should(Succeed())
 
-			// Reconcile
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      "test-basic-gateway",
@@ -101,7 +109,6 @@ var _ = Describe("ToolGateway Controller", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			// Verify Gateway was created
 			gateway := &gatewayv1.Gateway{}
 			Eventually(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{
@@ -110,7 +117,6 @@ var _ = Describe("ToolGateway Controller", func() {
 				}, gateway)
 			}, "10s", "1s").Should(Succeed())
 
-			// Verify Gateway configuration
 			Expect(gateway.Spec.GatewayClassName).To(Equal(gatewayv1.ObjectName("agentgateway")))
 			Expect(gateway.Spec.Listeners).To(HaveLen(1))
 			Expect(gateway.Spec.Listeners[0].Protocol).To(Equal(gatewayv1.HTTPProtocolType))
@@ -119,10 +125,18 @@ var _ = Describe("ToolGateway Controller", func() {
 			Expect(gateway.Spec.Listeners[0].AllowedRoutes.Namespaces.From).NotTo(BeNil())
 			Expect(*gateway.Spec.Listeners[0].AllowedRoutes.Namespaces.From).To(Equal(gatewayv1.NamespacesFromAll))
 
-			// Verify owner reference
 			Expect(gateway.OwnerReferences).To(HaveLen(1))
 			Expect(gateway.OwnerReferences[0].Name).To(Equal("test-basic-gateway"))
 			Expect(gateway.OwnerReferences[0].Kind).To(Equal("ToolGateway"))
+
+			// Second reconcile should be idempotent
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "test-basic-gateway",
+					Namespace: "default",
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
 		})
 
 		It("should return nil when ToolGateway is not found", func() {
@@ -135,68 +149,7 @@ var _ = Describe("ToolGateway Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("should update Gateway when ToolGateway is updated", func() {
-			// Create ToolGatewayClass
-			toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "update-test-class",
-				},
-				Spec: agentruntimev1alpha1.ToolGatewayClassSpec{
-					Controller: "runtime.agentic-layer.ai/tool-gateway-kgateway-controller",
-				},
-			}
-			Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
-
-			// Create ToolGateway
-			toolGateway := &agentruntimev1alpha1.ToolGateway{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-update-gateway",
-					Namespace: "default",
-				},
-				Spec: agentruntimev1alpha1.ToolGatewaySpec{
-					ToolGatewayClassName: "update-test-class",
-				},
-			}
-			Expect(k8sClient.Create(ctx, toolGateway)).To(Succeed())
-
-			// Wait for ToolGateway to be available
-			Eventually(func() error {
-				return k8sClient.Get(ctx, types.NamespacedName{
-					Name:      "test-update-gateway",
-					Namespace: "default",
-				}, &agentruntimev1alpha1.ToolGateway{})
-			}, "10s", "1s").Should(Succeed())
-
-			// Initial reconcile
-			_, err := reconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: types.NamespacedName{
-					Name:      "test-update-gateway",
-					Namespace: "default",
-				},
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			// Verify Gateway was created
-			gateway := &gatewayv1.Gateway{}
-			Eventually(func() error {
-				return k8sClient.Get(ctx, types.NamespacedName{
-					Name:      "test-update-gateway",
-					Namespace: "default",
-				}, gateway)
-			}, "10s", "1s").Should(Succeed())
-
-			// Second reconcile should still succeed
-			_, err = reconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: types.NamespacedName{
-					Name:      "test-update-gateway",
-					Namespace: "default",
-				},
-			})
-			Expect(err).NotTo(HaveOccurred())
-		})
-
 		It("should not reconcile ToolGateway with wrong controller", func() {
-			// Create ToolGatewayClass with different controller
 			toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "wrong-controller-class",
@@ -207,7 +160,6 @@ var _ = Describe("ToolGateway Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
 
-			// Create ToolGateway
 			toolGateway := &agentruntimev1alpha1.ToolGateway{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-wrong-controller",
@@ -219,7 +171,6 @@ var _ = Describe("ToolGateway Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, toolGateway)).To(Succeed())
 
-			// Reconcile - should succeed but not create Gateway
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      "test-wrong-controller",
@@ -228,7 +179,6 @@ var _ = Describe("ToolGateway Controller", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			// Verify Gateway was NOT created
 			gateway := &gatewayv1.Gateway{}
 			err = k8sClient.Get(ctx, types.NamespacedName{
 				Name:      "test-wrong-controller",
