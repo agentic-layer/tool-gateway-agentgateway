@@ -40,7 +40,6 @@ rules:
   - runtime.agentic-layer.ai
   resources:
   - toolgatewayclasses
-  - toolgateways
   - toolservers
   verbs:
   - get
@@ -49,7 +48,18 @@ rules:
 - apiGroups:
   - runtime.agentic-layer.ai
   resources:
+  - toolgateways
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - runtime.agentic-layer.ai
+  resources:
   - toolgateways/status
+  - toolservers/status
   verbs:
   - get
   - patch
