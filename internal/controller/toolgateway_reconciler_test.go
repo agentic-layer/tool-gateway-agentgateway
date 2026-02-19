@@ -23,6 +23,7 @@ import (
 	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -36,8 +37,9 @@ var _ = Describe("ToolGateway Controller", func() {
 
 	BeforeEach(func() {
 		reconciler = &ToolGatewayReconciler{
-			Client: k8sClient,
-			Scheme: k8sClient.Scheme(),
+			Client:   k8sClient,
+			Scheme:   k8sClient.Scheme(),
+			Recorder: record.NewFakeRecorder(100),
 		}
 	})
 
@@ -93,10 +95,12 @@ var _ = Describe("ToolGateway Controller", func() {
 
 			// Verify Gateway was created
 			gateway := &gatewayv1.Gateway{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{
-				Name:      "test-basic-gateway",
-				Namespace: "default",
-			}, gateway)).To(Succeed())
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Name:      "test-basic-gateway",
+					Namespace: "default",
+				}, gateway)
+			}, "10s", "1s").Should(Succeed())
 
 			// Verify Gateway configuration
 			Expect(gateway.Spec.GatewayClassName).To(Equal(gatewayv1.ObjectName("agentgateway")))
