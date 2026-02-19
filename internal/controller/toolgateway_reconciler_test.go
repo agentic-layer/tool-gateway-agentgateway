@@ -23,6 +23,7 @@ import (
 	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	agentruntimev1alpha1 "github.com/agentic-layer/agent-runtime-operator/api/v1alpha1"
@@ -60,6 +61,22 @@ var _ = Describe("ToolGateway Reconciler", func() {
 	})
 
 	Context("When reconciling a ToolGateway", func() {
+		AfterEach(func() {
+			// Clean up all ToolGateways in default namespace
+			toolGatewayList := &agentruntimev1alpha1.ToolGatewayList{}
+			Expect(k8sClient.List(ctx, toolGatewayList, client.InNamespace(toolGatewayNamespace))).To(Succeed())
+			for _, tg := range toolGatewayList.Items {
+				Expect(k8sClient.Delete(ctx, &tg)).To(Succeed())
+			}
+
+			// Wait for all Gateways to be deleted
+			Eventually(func() int {
+				gatewayList := &gatewayv1.GatewayList{}
+				_ = k8sClient.List(ctx, gatewayList, client.InNamespace(toolGatewayNamespace))
+				return len(gatewayList.Items)
+			}, timeout, interval).Should(Equal(0))
+		})
+
 		It("should create a Gateway resource", func() {
 			By("Creating a ToolGateway resource")
 			toolGateway := &agentruntimev1alpha1.ToolGateway{
@@ -93,18 +110,6 @@ var _ = Describe("ToolGateway Reconciler", func() {
 			Expect(gateway.OwnerReferences).To(HaveLen(1))
 			Expect(gateway.OwnerReferences[0].Name).To(Equal(toolGatewayName))
 			Expect(gateway.OwnerReferences[0].Kind).To(Equal("ToolGateway"))
-
-			By("Cleaning up the ToolGateway resource")
-			Expect(k8sClient.Delete(ctx, toolGateway)).To(Succeed())
-
-			By("Verifying the Gateway is deleted via owner reference")
-			Eventually(func() bool {
-				err := k8sClient.Get(ctx, types.NamespacedName{
-					Name:      toolGatewayName,
-					Namespace: toolGatewayNamespace,
-				}, gateway)
-				return err != nil
-			}, timeout, interval).Should(BeTrue())
 		})
 
 		It("should update the Gateway when ToolGateway is updated", func() {
@@ -133,9 +138,6 @@ var _ = Describe("ToolGateway Reconciler", func() {
 			By("Verifying reconciliation maintains Gateway configuration")
 			// The reconciler should maintain the Gateway in desired state
 			Expect(gateway.Spec.GatewayClassName).To(Equal(gatewayv1.ObjectName("agentgateway")))
-
-			By("Cleaning up")
-			Expect(k8sClient.Delete(ctx, toolGateway)).To(Succeed())
 		})
 	})
 })
