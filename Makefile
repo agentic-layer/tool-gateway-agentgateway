@@ -384,7 +384,7 @@ kind-load:
 
 
 ## Agent Runtime CRD configuration
-AGENT_RUNTIME_CRD_VERSION ?= 0.18.0
+AGENT_RUNTIME_CRD_VERSION ?= 0.18.1
 AGENT_RUNTIME_CRD_DIR = config/crd/external
 AGENT_RUNTIME_CRD_BASE_URL = https://raw.githubusercontent.com/agentic-layer/agent-runtime-operator/refs/tags/v$(AGENT_RUNTIME_CRD_VERSION)/config/crd/bases
 AGENT_RUNTIME_CRD_FILES = runtime.agentic-layer.ai_toolgateways.yaml runtime.agentic-layer.ai_toolgatewayclasses.yaml runtime.agentic-layer.ai_toolservers.yaml

@@ -30,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	agentruntimev1alpha1 "github.com/agentic-layer/agent-runtime-operator/api/v1alpha1"
 	// +kubebuilder:scaffold:imports
@@ -67,6 +68,9 @@ var _ = BeforeSuite(func() {
 	Expect(cfg).NotTo(BeNil())
 
 	err = agentruntimev1alpha1.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
+
+	err = gatewayv1.Install(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 
 	k8sManager, err = ctrl.NewManager(cfg, ctrl.Options{

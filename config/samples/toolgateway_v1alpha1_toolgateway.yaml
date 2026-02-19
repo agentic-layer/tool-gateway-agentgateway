@@ -1,7 +1,0 @@
-apiVersion: runtime.agentic-layer.ai/v1alpha1
-kind: ToolGateway
-metadata:
-  name: test-tool-gateway
-  namespace: test-namespace
-spec:
-  toolGatewayClassName: kgateway
