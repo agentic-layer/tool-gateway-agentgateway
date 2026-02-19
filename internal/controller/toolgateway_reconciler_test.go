@@ -24,7 +24,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -44,19 +43,7 @@ var _ = Describe("ToolGateway Controller", func() {
 	})
 
 	AfterEach(func() {
-		// Clean up all tool gateways in the default namespace after each test
-		toolGatewayList := &agentruntimev1alpha1.ToolGatewayList{}
-		Expect(k8sClient.List(ctx, toolGatewayList, &client.ListOptions{Namespace: "default"})).To(Succeed())
-		for i := range toolGatewayList.Items {
-			_ = k8sClient.Delete(ctx, &toolGatewayList.Items[i])
-		}
-
-		// Clean up tool gateway classes
-		toolGatewayClassList := &agentruntimev1alpha1.ToolGatewayClassList{}
-		Expect(k8sClient.List(ctx, toolGatewayClassList)).To(Succeed())
-		for i := range toolGatewayClassList.Items {
-			_ = k8sClient.Delete(ctx, &toolGatewayClassList.Items[i])
-		}
+		cleanupTestResources(ctx, k8sClient, "default")
 	})
 
 	Describe("Reconcile", func() {
