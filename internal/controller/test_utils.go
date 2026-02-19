@@ -20,7 +20,7 @@ import (
 	"context"
 
 	agentruntimev1alpha1 "github.com/agentic-layer/agent-runtime-operator/api/v1alpha1"
-	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -29,21 +29,21 @@ import (
 func cleanupTestResources(ctx context.Context, k8sClient client.Client, namespace string) {
 	// Clean up all tool servers in the namespace
 	toolServerList := &agentruntimev1alpha1.ToolServerList{}
-	Expect(k8sClient.List(ctx, toolServerList, &client.ListOptions{Namespace: namespace})).To(Succeed())
+	gomega.Expect(k8sClient.List(ctx, toolServerList, &client.ListOptions{Namespace: namespace})).To(gomega.Succeed())
 	for i := range toolServerList.Items {
 		_ = k8sClient.Delete(ctx, &toolServerList.Items[i])
 	}
 
 	// Clean up all tool gateways in the namespace
 	toolGatewayList := &agentruntimev1alpha1.ToolGatewayList{}
-	Expect(k8sClient.List(ctx, toolGatewayList, &client.ListOptions{Namespace: namespace})).To(Succeed())
+	gomega.Expect(k8sClient.List(ctx, toolGatewayList, &client.ListOptions{Namespace: namespace})).To(gomega.Succeed())
 	for i := range toolGatewayList.Items {
 		_ = k8sClient.Delete(ctx, &toolGatewayList.Items[i])
 	}
 
 	// Clean up all tool gateway classes (cluster-scoped)
 	toolGatewayClassList := &agentruntimev1alpha1.ToolGatewayClassList{}
-	Expect(k8sClient.List(ctx, toolGatewayClassList)).To(Succeed())
+	gomega.Expect(k8sClient.List(ctx, toolGatewayClassList)).To(gomega.Succeed())
 	for i := range toolGatewayClassList.Items {
 		_ = k8sClient.Delete(ctx, &toolGatewayClassList.Items[i])
 	}
