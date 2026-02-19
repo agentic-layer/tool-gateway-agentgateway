@@ -32,9 +32,32 @@ var _ = Describe("ToolGateway Reconciler", func() {
 	const (
 		toolGatewayName      = "test-tool-gateway"
 		toolGatewayNamespace = "default"
+		toolGatewayClassName = "kgateway"
 		timeout              = time.Second * 10
 		interval             = time.Millisecond * 250
 	)
+
+	BeforeEach(func() {
+		By("Creating a ToolGatewayClass")
+		toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: toolGatewayClassName,
+			},
+			Spec: agentruntimev1alpha1.ToolGatewayClassSpec{
+				Controller: "runtime.agentic-layer.ai/tool-gateway-kgateway-controller",
+			},
+		}
+		Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
+	})
+
+	AfterEach(func() {
+		By("Cleaning up the ToolGatewayClass")
+		toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{}
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: toolGatewayClassName}, toolGatewayClass)
+		if err == nil {
+			Expect(k8sClient.Delete(ctx, toolGatewayClass)).To(Succeed())
+		}
+	})
 
 	Context("When reconciling a ToolGateway", func() {
 		It("should create a Gateway resource", func() {
@@ -45,7 +68,7 @@ var _ = Describe("ToolGateway Reconciler", func() {
 					Namespace: toolGatewayNamespace,
 				},
 				Spec: agentruntimev1alpha1.ToolGatewaySpec{
-					ToolGatewayClassName: "kgateway",
+					ToolGatewayClassName: toolGatewayClassName,
 				},
 			}
 			Expect(k8sClient.Create(ctx, toolGateway)).To(Succeed())
@@ -92,7 +115,7 @@ var _ = Describe("ToolGateway Reconciler", func() {
 					Namespace: toolGatewayNamespace,
 				},
 				Spec: agentruntimev1alpha1.ToolGatewaySpec{
-					ToolGatewayClassName: "kgateway",
+					ToolGatewayClassName: toolGatewayClassName,
 				},
 			}
 			Expect(k8sClient.Create(ctx, toolGateway)).To(Succeed())

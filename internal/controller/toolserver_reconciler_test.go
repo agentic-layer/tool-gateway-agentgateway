@@ -21,6 +21,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
@@ -31,16 +32,28 @@ import (
 
 var _ = Describe("ToolServer Reconciler", func() {
 	const (
-		toolServerName      = "test-tool-server"
-		toolServerNamespace = "default"
-		toolGatewayName     = "test-gateway-for-server"
-		timeout             = time.Second * 10
-		interval            = time.Millisecond * 250
+		toolServerName       = "test-tool-server"
+		toolServerNamespace  = "default"
+		toolGatewayName      = "test-gateway-for-server"
+		toolGatewayClassName = "kgateway"
+		timeout              = time.Second * 10
+		interval             = time.Millisecond * 250
 	)
 
 	var replicas int32 = 1
 
 	BeforeEach(func() {
+		By("Creating a ToolGatewayClass")
+		toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: toolGatewayClassName,
+			},
+			Spec: agentruntimev1alpha1.ToolGatewayClassSpec{
+				Controller: "runtime.agentic-layer.ai/tool-gateway-kgateway-controller",
+			},
+		}
+		Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
+
 		By("Creating a ToolGateway for the ToolServer to reference")
 		toolGateway := &agentruntimev1alpha1.ToolGateway{
 			ObjectMeta: metav1.ObjectMeta{
@@ -48,7 +61,7 @@ var _ = Describe("ToolServer Reconciler", func() {
 				Namespace: toolServerNamespace,
 			},
 			Spec: agentruntimev1alpha1.ToolGatewaySpec{
-				ToolGatewayClassName: "kgateway",
+				ToolGatewayClassName: toolGatewayClassName,
 			},
 		}
 		Expect(k8sClient.Create(ctx, toolGateway)).To(Succeed())
@@ -73,6 +86,13 @@ var _ = Describe("ToolServer Reconciler", func() {
 		}, toolGateway)
 		if err == nil {
 			Expect(k8sClient.Delete(ctx, toolGateway)).To(Succeed())
+		}
+
+		By("Cleaning up the ToolGatewayClass")
+		toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{}
+		err = k8sClient.Get(ctx, types.NamespacedName{Name: toolGatewayClassName}, toolGatewayClass)
+		if err == nil {
+			Expect(k8sClient.Delete(ctx, toolGatewayClass)).To(Succeed())
 		}
 	})
 
@@ -176,7 +196,7 @@ var _ = Describe("ToolServer Reconciler", func() {
 					Port:          8000,
 					Path:          "/mcp",
 					Replicas:      &replicas,
-					ToolGatewayRef: &agentruntimev1alpha1.ToolGatewayReference{
+					ToolGatewayRef: &corev1.ObjectReference{
 						Name: toolGatewayName,
 					},
 				},
