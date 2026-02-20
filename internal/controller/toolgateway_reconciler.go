@@ -40,9 +40,6 @@ const (
 	agentGatewayClassName = "agentgateway"
 )
 
-// Version set at build time using ldflags
-var Version = "dev"
-
 // ToolGatewayReconciler reconciles a ToolGateway object
 type ToolGatewayReconciler struct {
 	client.Client
@@ -153,10 +150,10 @@ func (r *ToolGatewayReconciler) ensureGateway(ctx context.Context, toolGateway *
 
 		// Set the gateway specification
 		gateway.Spec = gatewayv1.GatewaySpec{
-			GatewayClassName: gatewayv1.ObjectName(agentGatewayClassName),
+			GatewayClassName: agentGatewayClassName,
 			Listeners: []gatewayv1.Listener{
 				{
-					Name:     gatewayv1.SectionName("http"),
+					Name:     "http",
 					Protocol: gatewayv1.HTTPProtocolType,
 					Port:     gatewayv1.PortNumber(80),
 					AllowedRoutes: &gatewayv1.AllowedRoutes{
