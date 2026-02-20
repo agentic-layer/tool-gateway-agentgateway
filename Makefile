@@ -133,7 +133,7 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 	esac
 
 .PHONY: install-deps
-install-deps: ## Install required infrastructure dependencies (cert-manager, Gateway API CRDs, kgateway, agent-runtime).
+install-deps: ## Install required infrastructure dependencies (cert-manager, Gateway API CRDs, agentgateway, agent-runtime).
 	@echo "Installing cert-manager $(CERT_MANAGER_VERSION)..."
 	$(HELM) upgrade -i cert-manager oci://quay.io/jetstack/charts/cert-manager \
 		--version $(CERT_MANAGER_VERSION) \
@@ -148,21 +148,25 @@ install-deps: ## Install required infrastructure dependencies (cert-manager, Gat
 	$(KUBECTL) wait validatingwebhookconfiguration/cert-manager-webhook \
 		--for "jsonpath={.webhooks[0].clientConfig.caBundle}" \
 		--timeout 5m
+
 	@echo "Installing Gateway API CRDs $(GATEWAY_API_VERSION)..."
 	$(KUBECTL) apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/$(GATEWAY_API_VERSION)/standard-install.yaml
-	@echo "Installing kgateway CRDs $(KGATEWAY_VERSION)..."
-	$(HELM) upgrade -i kgateway-crds \
-		oci://cr.kgateway.dev/kgateway-dev/charts/kgateway-crds \
-		--namespace $(KGATEWAY_NAMESPACE) \
-		--version $(KGATEWAY_VERSION) \
+
+	@echo "Installing agentgateway CRDs $(AGENTGATEWAY_VERSION)..."
+	$(HELM) upgrade -i agentgateway-crds \
+		oci://ghcr.io/kgateway-dev/charts/agentgateway-crds \
+		--namespace agentgateway-system \
+		--version $(AGENTGATEWAY_VERSION) \
 		--create-namespace \
 		--wait
-	@echo "Installing kgateway $(KGATEWAY_VERSION)..."
-	$(HELM) upgrade -i kgateway \
-		oci://cr.kgateway.dev/kgateway-dev/charts/kgateway \
-		--namespace $(KGATEWAY_NAMESPACE) \
-		--version $(KGATEWAY_VERSION) \
+
+	@echo "Installing agentgateway $(AGENTGATEWAY_VERSION)..."
+	$(HELM) upgrade -i agentgateway \
+		oci://ghcr.io/kgateway-dev/charts/agentgateway \
+		--namespace agentgateway-system \
+		--version $(AGENTGATEWAY_VERSION) \
 		--wait
+
 	@echo "Installing Agent Runtime Operator $(AGENT_RUNTIME_VERSION)..."
 	$(KUBECTL) apply -f https://github.com/agentic-layer/agent-runtime-operator/releases/download/$(AGENT_RUNTIME_VERSION)/install.yaml
 	$(KUBECTL) wait deployment.apps/agent-runtime-operator-controller-manager \
@@ -177,13 +181,13 @@ install-deps: ## Install required infrastructure dependencies (cert-manager, Gat
 		--timeout 5m
 
 .PHONY: uninstall-deps
-uninstall-deps: ## Uninstall infrastructure dependencies in reverse order (agent-runtime, kgateway, kgateway-crds, Gateway API CRDs, cert-manager).
+uninstall-deps: ## Uninstall infrastructure dependencies in reverse order (agent-runtime, agentgateway, agentgateway-crds, Gateway API CRDs, cert-manager).
 	@echo "Uninstalling Agent Runtime Operator $(AGENT_RUNTIME_VERSION)..."
 	$(KUBECTL) delete -f https://github.com/agentic-layer/agent-runtime-operator/releases/download/$(AGENT_RUNTIME_VERSION)/install.yaml --ignore-not-found
-	@echo "Uninstalling kgateway $(KGATEWAY_VERSION)..."
-	$(HELM) uninstall kgateway --namespace $(KGATEWAY_NAMESPACE) --ignore-not-found
-	@echo "Uninstalling kgateway CRDs $(KGATEWAY_VERSION)..."
-	$(HELM) uninstall kgateway-crds --namespace $(KGATEWAY_NAMESPACE) --ignore-not-found
+	@echo "Uninstalling agentgateway $(AGENTGATEWAY_VERSION)..."
+	$(HELM) uninstall agentgateway --namespace agentgateway-system --ignore-not-found
+	@echo "Uninstalling agentgateway CRDs $(AGENTGATEWAY_VERSION)..."
+	$(HELM) uninstall agentgateway-crds --namespace agentgateway-system --ignore-not-found
 	@echo "Uninstalling Gateway API CRDs $(GATEWAY_API_VERSION)..."
 	$(KUBECTL) delete -f https://github.com/kubernetes-sigs/gateway-api/releases/download/$(GATEWAY_API_VERSION)/standard-install.yaml --ignore-not-found
 	@echo "Uninstalling cert-manager $(CERT_MANAGER_VERSION)..."
@@ -311,9 +315,8 @@ GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
 ## Infrastructure Dependency Versions
 CERT_MANAGER_VERSION ?= v1.19.3
 GATEWAY_API_VERSION ?= v1.4.1
-KGATEWAY_VERSION ?= v2.1.2
+AGENTGATEWAY_VERSION ?= v2.2.0
 AGENT_RUNTIME_VERSION ?= $(shell go list -m -f "{{ .Version }}" github.com/agentic-layer/agent-runtime-operator)
-KGATEWAY_NAMESPACE ?= agentgateway-system
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.6.0
