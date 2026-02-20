@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -108,21 +109,32 @@ var _ = BeforeSuite(func() {
 	// Install kgateway with agentgateway support
 	By("creating agentgateway-system namespace")
 	_, err = utils.Run(exec.Command("kubectl", "create", "ns", "agentgateway-system"))
-	Expect(err).NotTo(HaveOccurred(), "Failed to create agentgateway-system namespace")
+	// Ignore error if namespace already exists
+	if err != nil && !strings.Contains(err.Error(), "AlreadyExists") {
+		Expect(err).NotTo(HaveOccurred(), "Failed to create agentgateway-system namespace")
+	}
 
-	By("installing kgateway CRDs")
-	_, err = utils.Run(exec.Command("helm", "upgrade", "-i", "kgateway-crds",
-		"oci://cr.kgateway.dev/kgateway-dev/charts/kgateway-crds",
-		"--namespace", "agentgateway-system",
-		"--version", "v2.1.2"))
-	Expect(err).NotTo(HaveOccurred(), "Failed to install kgateway CRDs")
+	// Check if kgateway is already installed
+	By("checking if kgateway is already installed")
+	_, err = utils.Run(exec.Command("kubectl", "get", "deployment", "kgateway", "-n", "agentgateway-system"))
+	if err != nil {
+		// kgateway not installed, install it
+		By("installing kgateway CRDs")
+		_, err = utils.Run(exec.Command("helm", "upgrade", "-i", "kgateway-crds",
+			"oci://cr.kgateway.dev/kgateway-dev/charts/kgateway-crds",
+			"--namespace", "agentgateway-system",
+			"--version", "v2.1.2"))
+		Expect(err).NotTo(HaveOccurred(), "Failed to install kgateway CRDs")
 
-	By("installing kgateway control plane")
-	_, err = utils.Run(exec.Command("helm", "upgrade", "-i", "kgateway",
-		"oci://cr.kgateway.dev/kgateway-dev/charts/kgateway",
-		"--namespace", "agentgateway-system",
-		"--version", "v2.1.2"))
-	Expect(err).NotTo(HaveOccurred(), "Failed to install kgateway control plane")
+		By("installing kgateway control plane")
+		_, err = utils.Run(exec.Command("helm", "upgrade", "-i", "kgateway",
+			"oci://cr.kgateway.dev/kgateway-dev/charts/kgateway",
+			"--namespace", "agentgateway-system",
+			"--version", "v2.1.2"))
+		Expect(err).NotTo(HaveOccurred(), "Failed to install kgateway control plane")
+	} else {
+		fmt.Println("WARNING: kgateway is already installed. Skipping installation...")
+	}
 
 	By("waiting for kgateway to be ready")
 	err = utils.VerifyDeploymentReady("kgateway", "agentgateway-system", 3*time.Minute)

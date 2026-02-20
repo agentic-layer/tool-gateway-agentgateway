@@ -31,7 +31,6 @@ metadata:
     toolgatewayclass.kubernetes.io/is-default-class: "true"
 spec:
   controller: runtime.agentic-layer.ai/tool-gateway-kgateway-controller
-  description: "kgateway-based ToolGateway implementation"
 
 # ToolGateway - creates a Gateway for routing to ToolServers
 ---
