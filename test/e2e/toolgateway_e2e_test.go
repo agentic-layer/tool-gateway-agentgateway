@@ -56,6 +56,15 @@ var _ = Describe("ToolGateway", Ordered, func() {
 	})
 
 	It("should proxy MCP requests to tool server", func() {
+		By("waiting for Gateway to be created")
+		Eventually(func(g Gomega) {
+			cmd := exec.Command("kubectl", "get", "gateway", "test-tool-gateway",
+				"-n", "tool-gateway", "-o", "jsonpath={.status.conditions}")
+			output, err := cmd.CombinedOutput()
+			g.Expect(err).NotTo(HaveOccurred(), "Gateway should exist")
+			g.Expect(string(output)).NotTo(BeEmpty(), "Gateway should have status")
+		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "Gateway should be created by reconciler")
+
 		By("sending MCP initialize request to the gateway")
 		mcpRequest := map[string]interface{}{
 			"jsonrpc": "2.0",
@@ -75,8 +84,10 @@ var _ = Describe("ToolGateway", Ordered, func() {
 		Eventually(func(g Gomega) {
 			var statusCode int
 			var err error
-			body, statusCode, err = utils.MakeServicePost("tool-gateway", "test-tool-gateway", 80,
-				"/mcp", mcpRequest)
+			// kgateway service in agentgateway-system namespace handles all Gateway traffic
+			// Using port 9977 which is the kgateway HTTP port
+			body, statusCode, err = utils.MakeServicePost("agentgateway-system", "kgateway", 9977,
+				"/test/echo-mcp-server/mcp", mcpRequest)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(statusCode).To(Equal(200))
 		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "Failed to send MCP request to gateway")
