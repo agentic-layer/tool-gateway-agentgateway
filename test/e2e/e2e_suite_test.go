@@ -18,11 +18,8 @@ package e2e
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
-	"strings"
 	"testing"
-	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -36,31 +33,7 @@ const operatorName = "tool-gateway-kgateway"
 // namespace where the project is deployed in
 const namespace = "tool-gateway-kgateway-system"
 
-// namespace where the agent-runtime is deployed in
-const agentRuntimeNamespace = "agent-runtime-operator-system"
-
-// agentRuntimeWebhookServiceName is the name of the webhook service
-const agentRuntimeWebhookServiceName = "agent-runtime-operator-webhook-service"
-
-// agentRuntimeWebhookMutatingConfiguration is the name of the mutating webhook configuration
-const agentRuntimeWebhookMutatingConfiguration = "agent-runtime-operator-mutating-webhook-configuration"
-
-// agentRuntimeWebhookValidatingConfiguration is the name of the validating webhook configuration
-const agentRuntimeWebhookValidatingConfiguration = "agent-runtime-operator-validating-webhook-configuration"
-
-// agentRuntimeInstallUrl is the URL to install the Agent Runtime Operator
-const agentRuntimeInstallUrl = "https://github.com/agentic-layer/agent-runtime-operator/releases/" +
-	"download/v0.18.1/install.yaml"
-
 var (
-	// Optional Environment Variables:
-	// - CERT_MANAGER_INSTALL_SKIP=true: Skips CertManager installation during test setup.
-	// These variables are useful if CertManager is already installed, avoiding
-	// re-installation and conflicts.
-	skipCertManagerInstall = os.Getenv("CERT_MANAGER_INSTALL_SKIP") == "true"
-	// isCertManagerAlreadyInstalled will be set true when CertManager CRDs be found on the cluster
-	isCertManagerAlreadyInstalled = false
-
 	// projectImage is the name of the image which will be build and loaded
 	// with the code source changes to be tested.
 	projectImage = "example.com/tool-gateway-kgateway:v0.0.1"
@@ -85,71 +58,6 @@ var _ = BeforeSuite(func() {
 	err = utils.LoadImageToKindClusterWithName(projectImage)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager(Operator) image into Kind")
 
-	// The tests-e2e are intended to run on a temporary cluster that is created and destroyed for testing.
-	// To prevent errors when tests run in environments with CertManager already installed,
-	// we check for its presence before execution.
-	// Setup CertManager before the suite if not skipped and if not already installed
-	if !skipCertManagerInstall {
-		By("checking if cert manager is installed already")
-		isCertManagerAlreadyInstalled = utils.IsCertManagerCRDsInstalled()
-		if !isCertManagerAlreadyInstalled {
-			_, _ = fmt.Fprintf(GinkgoWriter, "Installing CertManager...\n")
-			Expect(utils.InstallCertManager()).To(Succeed(), "Failed to install CertManager")
-		} else {
-			_, _ = fmt.Fprintf(GinkgoWriter, "WARNING: CertManager is already installed. Skipping installation...\n")
-		}
-	}
-
-	// Install Gateway API CRDs
-	By("installing Gateway API CRDs")
-	_, err = utils.Run(exec.Command("kubectl", "apply", "-f",
-		"https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.1/standard-install.yaml"))
-	Expect(err).NotTo(HaveOccurred(), "Failed to install Gateway API CRDs")
-
-	// Install kgateway with agentgateway support
-	By("creating agentgateway-system namespace")
-	_, err = utils.Run(exec.Command("kubectl", "create", "ns", "agentgateway-system"))
-	// Ignore error if namespace already exists
-	if err != nil && !strings.Contains(err.Error(), "AlreadyExists") {
-		Expect(err).NotTo(HaveOccurred(), "Failed to create agentgateway-system namespace")
-	}
-
-	// Check if kgateway is already installed
-	By("checking if kgateway is already installed")
-	_, err = utils.Run(exec.Command("kubectl", "get", "deployment", "kgateway", "-n", "agentgateway-system"))
-	if err != nil {
-		// kgateway not installed, install it
-		By("installing kgateway CRDs")
-		_, err = utils.Run(exec.Command("helm", "upgrade", "-i", "kgateway-crds",
-			"oci://cr.kgateway.dev/kgateway-dev/charts/kgateway-crds",
-			"--namespace", "agentgateway-system",
-			"--version", "v2.1.2"))
-		Expect(err).NotTo(HaveOccurred(), "Failed to install kgateway CRDs")
-
-		By("installing kgateway control plane")
-		_, err = utils.Run(exec.Command("helm", "upgrade", "-i", "kgateway",
-			"oci://cr.kgateway.dev/kgateway-dev/charts/kgateway",
-			"--namespace", "agentgateway-system",
-			"--version", "v2.1.2"))
-		Expect(err).NotTo(HaveOccurred(), "Failed to install kgateway control plane")
-	} else {
-		fmt.Println("WARNING: kgateway is already installed. Skipping installation...")
-	}
-
-	By("waiting for kgateway to be ready")
-	err = utils.VerifyDeploymentReady("kgateway", "agentgateway-system", 3*time.Minute)
-	Expect(err).NotTo(HaveOccurred(), "kgateway should be ready")
-
-	// Deploy the Agent Runtime Operator which is a dependency for this operator
-	By("deploying the agent runtime")
-	_, err = utils.Run(exec.Command("kubectl", "apply", "-f", agentRuntimeInstallUrl))
-	Expect(err).NotTo(HaveOccurred(), "Failed to deploy the agent runtime")
-
-	By("waiting for agent-runtime-operator-controller-manager to be ready")
-	err = utils.VerifyDeploymentReady(
-		"agent-runtime-operator-controller-manager", agentRuntimeNamespace, 3*time.Minute)
-	Expect(err).NotTo(HaveOccurred(), "agent-runtime-operator-controller-manager should be ready")
-
 	// Deploy the operator
 	By("creating manager namespace")
 	_, err = utils.Run(exec.Command("kubectl", "create", "ns", namespace))
@@ -167,10 +75,6 @@ var _ = BeforeSuite(func() {
 	By("deploying the controller-manager")
 	_, err = utils.Run(exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage)))
 	Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
-
-	waitForWebhook(agentRuntimeNamespace, agentRuntimeWebhookServiceName)
-	waitForWebhookCaBundleMutating(agentRuntimeWebhookMutatingConfiguration)
-	waitForWebhookCaBundleValidating(agentRuntimeWebhookValidatingConfiguration)
 })
 
 var _ = AfterSuite(func() {
@@ -182,66 +86,7 @@ var _ = AfterSuite(func() {
 
 	By("removing manager namespace")
 	_, _ = utils.Run(exec.Command("kubectl", "delete", "ns", namespace))
-
-	// Note: Not tearing down CertManager for potential reuse during local testing
 })
-
-// waitForWebhook is a helper function that waits for webhook service to be ready
-func waitForWebhook(namespace string, webhookServiceName string) {
-	By("waiting for webhook deployment to be ready")
-	Eventually(func(g Gomega) {
-		// Check that the webhook deployment is ready
-		output, err := utils.Run(exec.Command("kubectl", "get", "deployment",
-			"-l", "control-plane=controller-manager", "-n", namespace,
-			"-o", "jsonpath={.items[0].status.readyReplicas}"))
-		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(output).To(Equal("1"), "Controller manager should have 1 ready replica")
-	}, 3*time.Minute, 5*time.Second).Should(Succeed())
-
-	By("waiting for webhook service to be ready")
-	Eventually(func(g Gomega) {
-		// Check that the webhook service exists and has endpoints
-		_, err := utils.Run(exec.Command("kubectl", "get", "service",
-			webhookServiceName, "-n", namespace))
-		g.Expect(err).NotTo(HaveOccurred())
-
-		// Check that the webhook service has endpoints (meaning pods are ready)
-		output, err := utils.Run(exec.Command("kubectl", "get", "endpoints", webhookServiceName,
-			"-n", namespace, "-o", "jsonpath={.subsets[*].addresses[*].ip}"))
-		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(output).NotTo(BeEmpty(), "Webhook service should have endpoints")
-	}).Should(Succeed())
-
-	By("verifying that the certificate secret has been created")
-	Eventually(func(g Gomega) {
-		_, err := utils.Run(exec.Command("kubectl", "get", "secrets", "webhook-server-cert", "-n", namespace))
-		g.Expect(err).NotTo(HaveOccurred())
-	}).Should(Succeed())
-}
-
-func waitForWebhookCaBundle(kind string, name string) {
-	Eventually(func(g Gomega) {
-		mwhOutput, err := utils.Run(exec.Command("kubectl", "get",
-			kind,
-			name,
-			"-o", "go-template={{ range .webhooks }}{{ .clientConfig.caBundle }}{{ end }}"))
-		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(len(mwhOutput)).To(BeNumerically(">", 10))
-	}).Should(Succeed())
-}
-
-func waitForWebhookCaBundleMutating(name string) {
-	waitForWebhookCaBundle(
-		"mutatingwebhookconfigurations.admissionregistration.k8s.io",
-		name,
-	)
-}
-func waitForWebhookCaBundleValidating(name string) {
-	waitForWebhookCaBundle(
-		"validatingwebhookconfigurations.admissionregistration.k8s.io",
-		name,
-	)
-}
 
 func fetchKubernetesEvents() {
 	By("Fetching Kubernetes events")

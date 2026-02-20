@@ -115,8 +115,6 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
-# CertManager is installed by default; skip with:
-# - CERT_MANAGER_INSTALL_SKIP=true
 KIND_CLUSTER ?= tool-gateway-kgateway-test-e2e
 
 .PHONY: setup-test-e2e
@@ -127,11 +125,70 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 	}
 	@case "$$($(KIND) get clusters)" in \
 		*"$(KIND_CLUSTER)"*) \
-			echo "Kind cluster '$(KIND_CLUSTER)' already exists. Skipping creation." ;; \
+			echo "Kind cluster '$(KIND_CLUSTER)' already exists. Skipping creation and using context." ; \
+			$(KUBECTL) config use-context kind-$(KIND_CLUSTER) ;; \
 		*) \
 			echo "Creating Kind cluster '$(KIND_CLUSTER)'..."; \
 			$(KIND) create cluster --name $(KIND_CLUSTER) ;; \
 	esac
+
+.PHONY: install-deps
+install-deps: ## Install required infrastructure dependencies (cert-manager, Gateway API CRDs, kgateway, agent-runtime).
+	@echo "Installing cert-manager $(CERT_MANAGER_VERSION)..."
+	$(HELM) upgrade -i cert-manager oci://quay.io/jetstack/charts/cert-manager \
+		--version $(CERT_MANAGER_VERSION) \
+		--namespace cert-manager \
+		--create-namespace \
+		--set crds.enabled=true \
+		--set securityContext.runAsUser=1000 \
+		--set webhook.securityContext.runAsUser=1000 \
+		--set cainjector.securityContext.runAsUser=1000 \
+		--set startupapicheck.securityContext.runAsUser=1000 \
+		--wait
+	$(KUBECTL) wait validatingwebhookconfiguration/cert-manager-webhook \
+		--for "jsonpath={.webhooks[0].clientConfig.caBundle}" \
+		--timeout 5m
+	@echo "Installing Gateway API CRDs $(GATEWAY_API_VERSION)..."
+	$(KUBECTL) apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/$(GATEWAY_API_VERSION)/standard-install.yaml
+	@echo "Installing kgateway CRDs $(KGATEWAY_VERSION)..."
+	$(HELM) upgrade -i kgateway-crds \
+		oci://cr.kgateway.dev/kgateway-dev/charts/kgateway-crds \
+		--namespace $(KGATEWAY_NAMESPACE) \
+		--version $(KGATEWAY_VERSION) \
+		--create-namespace \
+		--wait
+	@echo "Installing kgateway $(KGATEWAY_VERSION)..."
+	$(HELM) upgrade -i kgateway \
+		oci://cr.kgateway.dev/kgateway-dev/charts/kgateway \
+		--namespace $(KGATEWAY_NAMESPACE) \
+		--version $(KGATEWAY_VERSION) \
+		--wait
+	@echo "Installing Agent Runtime Operator $(AGENT_RUNTIME_VERSION)..."
+	$(KUBECTL) apply -f https://github.com/agentic-layer/agent-runtime-operator/releases/download/$(AGENT_RUNTIME_VERSION)/install.yaml
+	$(KUBECTL) wait deployment.apps/agent-runtime-operator-controller-manager \
+		--for condition=Available \
+		--namespace agent-runtime-operator-system \
+		--timeout 5m
+	$(KUBECTL) wait mutatingwebhookconfiguration/agent-runtime-operator-mutating-webhook-configuration \
+		--for "jsonpath={.webhooks[0].clientConfig.caBundle}" \
+		--timeout 5m
+	$(KUBECTL) wait validatingwebhookconfiguration/agent-runtime-operator-validating-webhook-configuration \
+		--for "jsonpath={.webhooks[0].clientConfig.caBundle}" \
+		--timeout 5m
+
+.PHONY: uninstall-deps
+uninstall-deps: ## Uninstall infrastructure dependencies in reverse order (agent-runtime, kgateway, kgateway-crds, Gateway API CRDs, cert-manager).
+	@echo "Uninstalling Agent Runtime Operator $(AGENT_RUNTIME_VERSION)..."
+	$(KUBECTL) delete -f https://github.com/agentic-layer/agent-runtime-operator/releases/download/$(AGENT_RUNTIME_VERSION)/install.yaml --ignore-not-found
+	@echo "Uninstalling kgateway $(KGATEWAY_VERSION)..."
+	$(HELM) uninstall kgateway --namespace $(KGATEWAY_NAMESPACE) --ignore-not-found
+	@echo "Uninstalling kgateway CRDs $(KGATEWAY_VERSION)..."
+	$(HELM) uninstall kgateway-crds --namespace $(KGATEWAY_NAMESPACE) --ignore-not-found
+	@echo "Uninstalling Gateway API CRDs $(GATEWAY_API_VERSION)..."
+	$(KUBECTL) delete -f https://github.com/kubernetes-sigs/gateway-api/releases/download/$(GATEWAY_API_VERSION)/standard-install.yaml --ignore-not-found
+	@echo "Uninstalling cert-manager $(CERT_MANAGER_VERSION)..."
+	$(HELM) uninstall cert-manager --namespace cert-manager --ignore-not-found
+	$(KUBECTL) delete namespace cert-manager --ignore-not-found
 
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
@@ -245,10 +302,18 @@ $(LOCALBIN):
 ## Tool Binaries
 KUBECTL ?= kubectl
 KIND ?= kind
+HELM ?= helm
 KUSTOMIZE ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
+
+## Infrastructure Dependency Versions
+CERT_MANAGER_VERSION ?= v1.19.3
+GATEWAY_API_VERSION ?= v1.4.1
+KGATEWAY_VERSION ?= v2.1.2
+AGENT_RUNTIME_VERSION ?= v0.18.2
+KGATEWAY_NAMESPACE ?= agentgateway-system
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.6.0
@@ -382,26 +447,25 @@ kind-load:
 
 
 ## Agent Runtime CRD configuration
-AGENT_RUNTIME_CRD_VERSION ?= 0.18.1
 AGENT_RUNTIME_CRD_DIR = config/crd/external
-AGENT_RUNTIME_CRD_BASE_URL = https://raw.githubusercontent.com/agentic-layer/agent-runtime-operator/refs/tags/v$(AGENT_RUNTIME_CRD_VERSION)/config/crd/bases
+AGENT_RUNTIME_CRD_BASE_URL = https://raw.githubusercontent.com/agentic-layer/agent-runtime-operator/refs/tags/v$(AGENT_RUNTIME_VERSION)/config/crd/bases
 AGENT_RUNTIME_CRD_FILES = runtime.agentic-layer.ai_toolgateways.yaml runtime.agentic-layer.ai_toolgatewayclasses.yaml runtime.agentic-layer.ai_toolservers.yaml
 AGENT_RUNTIME_CRDS = $(addprefix $(AGENT_RUNTIME_CRD_DIR)/,$(AGENT_RUNTIME_CRD_FILES))
-AGENT_RUNTIME_CRD_VERSION_FILE = $(AGENT_RUNTIME_CRD_DIR)/.version
+AGENT_RUNTIME_VERSION_FILE = $(AGENT_RUNTIME_CRD_DIR)/.version
 
 ## Download Agent Runtime CRDs from upstream repository
 .PHONY: agent-runtime-crds
 agent-runtime-crds: $(AGENT_RUNTIME_CRDS)
 
-$(AGENT_RUNTIME_CRD_DIR)/%.yaml: $(AGENT_RUNTIME_CRD_VERSION_FILE)
-	@echo "Downloading $(notdir $@) version $(AGENT_RUNTIME_CRD_VERSION)..."
+$(AGENT_RUNTIME_CRD_DIR)/%.yaml: $(AGENT_RUNTIME_VERSION_FILE)
+	@echo "Downloading $(notdir $@) version $(AGENT_RUNTIME_VERSION)..."
 	@curl -sSLf -o $@ $(AGENT_RUNTIME_CRD_BASE_URL)/$(notdir $@)
 
-$(AGENT_RUNTIME_CRD_VERSION_FILE): FORCE
-	@if [ ! -f $@ ] || [ "$$(cat $@)" != "$(AGENT_RUNTIME_CRD_VERSION)" ]; then \
-		echo "Version changed to $(AGENT_RUNTIME_CRD_VERSION), removing old CRDs..."; \
+$(AGENT_RUNTIME_VERSION_FILE): FORCE
+	@if [ ! -f $@ ] || [ "$$(cat $@)" != "$(AGENT_RUNTIME_VERSION)" ]; then \
+		echo "Version changed to $(AGENT_RUNTIME_VERSION), removing old CRDs..."; \
 		rm -f $(AGENT_RUNTIME_CRDS); \
-		echo "$(AGENT_RUNTIME_CRD_VERSION)" > $@; \
+		echo "$(AGENT_RUNTIME_VERSION)" > $@; \
 	fi
 
 .PHONY: FORCE

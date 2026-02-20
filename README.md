@@ -36,27 +36,18 @@ Before working with this project, ensure you have the following tools installed 
 # Create local cluster
 kind create cluster
 
-# Install cert-manager
-kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.19.1/cert-manager.yaml
-
-# Install Gateway API CRDs
-kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.1/standard-install.yaml
-
-# Install kgateway with agentgateway support
-kubectl create ns agentgateway-system
-
-helm upgrade -i kgateway-crds \
-  oci://cr.kgateway.dev/kgateway-dev/charts/kgateway-crds \
-  --namespace agentgateway-system \
-  --version v2.1.2
-
-helm upgrade -i kgateway \
-  oci://cr.kgateway.dev/kgateway-dev/charts/kgateway \
-  --namespace agentgateway-system \
-  --version v2.1.2
+# Install required dependencies (cert-manager, Gateway API CRDs, kgateway, agent-runtime)
+make install-deps
 
 # Install the Tool Gateway operator
 kubectl apply -f https://github.com/agentic-layer/tool-gateway-kgateway/releases/latest/download/install.yaml
+```
+
+To remove all dependencies from the cluster again:
+
+```shell
+kubectl delete -f https://github.com/agentic-layer/tool-gateway-kgateway/releases/latest/download/install.yaml
+make uninstall-deps
 ```
 
 ## How it Works
@@ -187,12 +178,13 @@ If you need to run E2E tests manually or inspect the test environment:
 ```bash
 # Set up test cluster
 make setup-test-e2e
-```
-```bash
+
+# Install required dependencies
+make install-deps
+
 # Run E2E tests against the existing cluster
 KIND_CLUSTER=tool-gateway-kgateway-test-e2e go test ./test/e2e/ -v -ginkgo.v
-```
-```bash
+
 # Clean up test cluster when done
 make cleanup-test-e2e
 ```
