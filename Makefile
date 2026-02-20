@@ -312,7 +312,7 @@ GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
 CERT_MANAGER_VERSION ?= v1.19.3
 GATEWAY_API_VERSION ?= v1.4.1
 KGATEWAY_VERSION ?= v2.1.2
-AGENT_RUNTIME_VERSION ?= v0.18.2
+AGENT_RUNTIME_VERSION ?= $(shell go list -m -f "{{ .Version }}" github.com/agentic-layer/agent-runtime-operator)
 KGATEWAY_NAMESPACE ?= agentgateway-system
 
 ## Tool Versions
@@ -448,7 +448,7 @@ kind-load:
 
 ## Agent Runtime CRD configuration
 AGENT_RUNTIME_CRD_DIR = config/crd/external
-AGENT_RUNTIME_CRD_BASE_URL = https://raw.githubusercontent.com/agentic-layer/agent-runtime-operator/refs/tags/v$(AGENT_RUNTIME_VERSION)/config/crd/bases
+AGENT_RUNTIME_CRD_BASE_URL = https://raw.githubusercontent.com/agentic-layer/agent-runtime-operator/refs/tags/$(AGENT_RUNTIME_VERSION)/config/crd/bases
 AGENT_RUNTIME_CRD_FILES = runtime.agentic-layer.ai_toolgateways.yaml runtime.agentic-layer.ai_toolgatewayclasses.yaml runtime.agentic-layer.ai_toolservers.yaml
 AGENT_RUNTIME_CRDS = $(addprefix $(AGENT_RUNTIME_CRD_DIR)/,$(AGENT_RUNTIME_CRD_FILES))
 AGENT_RUNTIME_VERSION_FILE = $(AGENT_RUNTIME_CRD_DIR)/.version
