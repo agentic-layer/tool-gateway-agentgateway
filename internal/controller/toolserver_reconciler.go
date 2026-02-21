@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -89,10 +90,23 @@ func (r *ToolServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
+	// Compute unique path for this ToolServer
+	suffix := "/mcp"
+	if toolServer.Spec.TransportType == "sse" {
+		suffix = "/sse"
+	}
+	path := fmt.Sprintf("/%s/%s%s", toolServer.Namespace, toolServer.Name, suffix)
+
 	// Create or update HTTPRoute
-	if err := r.ensureHTTPRoute(ctx, &toolServer, toolGateway); err != nil {
+	if err := r.ensureHTTPRoute(ctx, &toolServer, toolGateway, path); err != nil {
 		log.Error(err, "Failed to ensure HTTPRoute")
 		r.Recorder.Event(&toolServer, "Warning", "RouteFailed", err.Error())
+		return ctrl.Result{}, err
+	}
+
+	// Update ToolServer status with gateway URL
+	if err := r.updateStatus(ctx, &toolServer, toolGateway, path); err != nil {
+		log.Error(err, "Failed to update ToolServer status")
 		return ctrl.Result{}, err
 	}
 
@@ -206,19 +220,9 @@ func (r *ToolServerReconciler) ensureHTTPRoute(
 	ctx context.Context,
 	toolServer *agentruntimev1alpha1.ToolServer,
 	toolGateway *agentruntimev1alpha1.ToolGateway,
+	path string,
 ) error {
 	log := logf.FromContext(ctx)
-
-	// Determine the path for this tool server
-	path := toolServer.Spec.Path
-	if path == "" {
-		// Default path based on transport type
-		if toolServer.Spec.TransportType == "sse" {
-			path = "/sse"
-		} else {
-			path = "/mcp"
-		}
-	}
 
 	// HTTPRoute in same namespace as ToolServer, owned by ToolServer
 	route := &gatewayv1.HTTPRoute{
@@ -290,6 +294,22 @@ func (r *ToolServerReconciler) ensureHTTPRoute(
 	}
 
 	return nil
+}
+
+// updateStatus updates the ToolServer status with the internal gateway URL
+func (r *ToolServerReconciler) updateStatus(
+	ctx context.Context,
+	toolServer *agentruntimev1alpha1.ToolServer,
+	toolGateway *agentruntimev1alpha1.ToolGateway,
+	path string,
+) error {
+	toolServer.Status.Url = fmt.Sprintf("http://%s.%s.svc.cluster.local%s",
+		toolGateway.Name, toolGateway.Namespace, path)
+	toolServer.Status.ToolGatewayRef = &corev1.ObjectReference{
+		Name:      toolGateway.Name,
+		Namespace: toolGateway.Namespace,
+	}
+	return r.Status().Update(ctx, toolServer)
 }
 
 // SetupWithManager sets up the controller with the Manager.

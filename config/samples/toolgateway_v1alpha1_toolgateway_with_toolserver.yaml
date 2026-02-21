@@ -54,7 +54,6 @@ spec:
   transportType: http
   image: ghcr.io/agentic-layer/echo-mcp-server:0.1.0
   port: 8000
-  path: /mcp
   replicas: 1
   toolGatewayRef:
     name: test-tool-gateway

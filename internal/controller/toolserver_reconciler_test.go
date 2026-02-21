@@ -127,7 +127,7 @@ var _ = Describe("ToolServer Controller", func() {
 			Expect(httpRoute.Spec.ParentRefs[0].Name).To(Equal(gatewayv1.ObjectName("test-gateway")))
 			Expect(httpRoute.Spec.Rules).To(HaveLen(1))
 			Expect(httpRoute.Spec.Rules[0].Matches).To(HaveLen(1))
-			Expect(httpRoute.Spec.Rules[0].Matches[0].Path.Value).To(Equal(stringPtr("/mcp")))
+			Expect(httpRoute.Spec.Rules[0].Matches[0].Path.Value).To(Equal(stringPtr("/default/test-tool-server/mcp")))
 
 			Expect(httpRoute.OwnerReferences).To(HaveLen(1))
 			Expect(httpRoute.OwnerReferences[0].Name).To(Equal("test-tool-server"))
@@ -178,7 +178,54 @@ var _ = Describe("ToolServer Controller", func() {
 				}, httpRoute)
 			}, "10s", "1s").Should(Succeed())
 
-			Expect(httpRoute.Spec.Rules[0].Matches[0].Path.Value).To(Equal(stringPtr("/sse")))
+			Expect(httpRoute.Spec.Rules[0].Matches[0].Path.Value).To(Equal(stringPtr("/default/test-sse-server/sse")))
+		})
+
+		It("should update ToolServer status with gateway URL", func() {
+			setupTestGatewayAndClass("status-test-class", "test-gateway")
+
+			toolServer := &agentruntimev1alpha1.ToolServer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-tool-server",
+					Namespace: "default",
+				},
+				Spec: agentruntimev1alpha1.ToolServerSpec{
+					Image:         "test-image:latest",
+					Port:          8000,
+					Protocol:      "mcp",
+					TransportType: "http",
+					ToolGatewayRef: &corev1.ObjectReference{
+						Name:      "test-gateway",
+						Namespace: "default",
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, toolServer)).To(Succeed())
+
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Name:      "test-tool-server",
+					Namespace: "default",
+				}, &agentruntimev1alpha1.ToolServer{})
+			}, "10s", "1s").Should(Succeed())
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "test-tool-server",
+					Namespace: "default",
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			updated := &agentruntimev1alpha1.ToolServer{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      "test-tool-server",
+				Namespace: "default",
+			}, updated)).To(Succeed())
+
+			Expect(updated.Status.Url).To(Equal("http://test-gateway.default.svc.cluster.local/default/test-tool-server/mcp"))
+			Expect(updated.Status.ToolGatewayRef).NotTo(BeNil())
+			Expect(updated.Status.ToolGatewayRef.Name).To(Equal("test-gateway"))
 		})
 
 		It("should return nil when ToolServer is not found", func() {
