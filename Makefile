@@ -195,7 +195,7 @@ uninstall-deps: ## Uninstall infrastructure dependencies in reverse order (agent
 	$(KUBECTL) delete namespace cert-manager --ignore-not-found
 
 .PHONY: test-e2e
-test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
+test-e2e: setup-test-e2e install-deps manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
 	KIND_CLUSTER=$(KIND_CLUSTER) go test ./test/e2e/ -v -ginkgo.v
 
 .PHONY: cleanup-test-e2e
