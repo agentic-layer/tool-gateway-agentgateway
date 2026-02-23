@@ -1,4 +1,4 @@
-module github.com/agentic-layer/tool-gateway-kgateway
+module github.com/agentic-layer/tool-gateway-agentgateway
 
 go 1.24.0
 

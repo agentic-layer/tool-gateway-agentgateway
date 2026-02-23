@@ -36,7 +36,7 @@ import (
 	agentruntimev1alpha1 "github.com/agentic-layer/agent-runtime-operator/api/v1alpha1"
 )
 
-const ToolServerKgatewayControllerName = "runtime.agentic-layer.ai/toolserver-kgateway-controller"
+const ToolServerAgentgatewayControllerName = "runtime.agentic-layer.ai/toolserver-agentgateway-controller"
 
 // ToolServerReconciler reconciles a ToolServer object
 type ToolServerReconciler struct {
@@ -245,6 +245,6 @@ func (r *ToolServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&agentruntimev1alpha1.ToolServer{}).
 		Owns(&gatewayv1.HTTPRoute{}).
-		Named(ToolServerKgatewayControllerName).
+		Named(ToolServerAgentgatewayControllerName).
 		Complete(r)
 }

@@ -25,12 +25,12 @@ metadata:
 apiVersion: runtime.agentic-layer.ai/v1alpha1
 kind: ToolGatewayClass
 metadata:
-  name: kgateway
+  name: agentgateway
   namespace: tool-gateway
   annotations:
     toolgatewayclass.kubernetes.io/is-default-class: "true"
 spec:
-  controller: runtime.agentic-layer.ai/tool-gateway-kgateway-controller
+  controller: runtime.agentic-layer.ai/tool-gateway-agentgateway-controller
 
 # ToolGateway - creates a Gateway for routing to ToolServers
 ---
@@ -40,7 +40,7 @@ metadata:
   name: test-tool-gateway
   namespace: tool-gateway
 spec:
-  toolGatewayClassName: kgateway
+  toolGatewayClassName: agentgateway
 
 # ToolServer - deploys echo MCP server with routing configuration
 ---

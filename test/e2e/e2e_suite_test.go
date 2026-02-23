@@ -24,19 +24,19 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/agentic-layer/tool-gateway-kgateway/test/utils"
+	"github.com/agentic-layer/tool-gateway-agentgateway/test/utils"
 )
 
 // operatorName is the name of the operator being tested
-const operatorName = "tool-gateway-kgateway"
+const operatorName = "tool-gateway-agentgateway"
 
 // namespace where the project is deployed in
-const namespace = "tool-gateway-kgateway-system"
+const namespace = "tool-gateway-agentgateway-system"
 
 var (
 	// projectImage is the name of the image which will be build and loaded
 	// with the code source changes to be tested.
-	projectImage = "example.com/tool-gateway-kgateway:v0.0.1"
+	projectImage = "example.com/tool-gateway-agentgateway:v0.0.1"
 )
 
 // TestE2E runs the end-to-end (e2e) test suite for the project. These tests execute in an isolated,
@@ -45,7 +45,7 @@ var (
 // CertManager.
 func TestE2E(t *testing.T) {
 	RegisterFailHandler(Fail)
-	_, _ = fmt.Fprintf(GinkgoWriter, "Starting tool-gateway-kgateway integration test suite\n")
+	_, _ = fmt.Fprintf(GinkgoWriter, "Starting tool-gateway-agentgateway integration test suite\n")
 	RunSpecs(t, "e2e suite")
 }
 

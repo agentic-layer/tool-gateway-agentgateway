@@ -28,10 +28,10 @@ BUNDLE_METADATA_OPTS ?= $(BUNDLE_CHANNELS) $(BUNDLE_DEFAULT_CHANNEL)
 # This variable is used to construct full image tags for bundle and catalog images.
 #
 # For example, running 'make bundle-build bundle-push catalog-build catalog-push' will build and push both
-# ghcr.io/agentic-layer/tool-gateway-kgateway-bundle:$VERSION and ghcr.io/agentic-layer/tool-gateway-kgateway-catalog:$VERSION.
-IMAGE_TAG_BASE ?= ghcr.io/agentic-layer/tool-gateway-kgateway
+# ghcr.io/agentic-layer/tool-gateway-agentgateway-bundle:$VERSION and ghcr.io/agentic-layer/tool-gateway-agentgateway-catalog:$VERSION.
+IMAGE_TAG_BASE ?= ghcr.io/agentic-layer/tool-gateway-agentgateway
 
-MANIFESTS_IMG ?= oci://ghcr.io/agentic-layer/manifests/tool-gateway-kgateway:$(VERSION)
+MANIFESTS_IMG ?= oci://ghcr.io/agentic-layer/manifests/tool-gateway-agentgateway:$(VERSION)
 
 # BUNDLE_IMG defines the image:tag used for the bundle.
 # You can use it as an arg. (E.g make bundle-build BUNDLE_IMG=<some-registry>/<project-name-bundle>:<tag>)
@@ -115,7 +115,7 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
-KIND_CLUSTER ?= tool-gateway-kgateway-test-e2e
+KIND_CLUSTER ?= tool-gateway-agentgateway-test-e2e
 
 .PHONY: setup-test-e2e
 setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
@@ -246,13 +246,13 @@ PLATFORMS ?= linux/arm64,linux/amd64
 docker-buildx: ## Build and push docker image for the manager for cross-platform support
 	# copy existing Dockerfile and insert --platform=${BUILDPLATFORM} into Dockerfile.cross, and preserve the original Dockerfile
 	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
-	- $(CONTAINER_TOOL) buildx create --name tool-gateway-kgateway-builder
-	$(CONTAINER_TOOL) buildx use tool-gateway-kgateway-builder
+	- $(CONTAINER_TOOL) buildx create --name tool-gateway-agentgateway-builder
+	$(CONTAINER_TOOL) buildx use tool-gateway-agentgateway-builder
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) \
     		  --tag $(IMG) \
     		  --tag $(IMAGE_TAG_BASE):latest \
     		  -f Dockerfile.cross .
-	- $(CONTAINER_TOOL) buildx rm tool-gateway-kgateway-builder
+	- $(CONTAINER_TOOL) buildx rm tool-gateway-agentgateway-builder
 	rm Dockerfile.cross
 
 .PHONY: build-installer

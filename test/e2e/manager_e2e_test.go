@@ -27,20 +27,20 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/agentic-layer/tool-gateway-kgateway/test/utils"
+	"github.com/agentic-layer/tool-gateway-agentgateway/test/utils"
 )
 
 // serviceAccountName created for the project
-const serviceAccountName = "tool-gateway-kgateway-controller-manager"
+const serviceAccountName = "tool-gateway-agentgateway-controller-manager"
 
 // metricsServiceName is the name of the metrics service of the project
-const metricsServiceName = "tool-gateway-kgateway-controller-manager-metrics-service"
+const metricsServiceName = "tool-gateway-agentgateway-controller-manager-metrics-service"
 
 // metricsRoleBindingName is the name of the RBAC that will be created to allow get the metrics data
-const metricsRoleBindingName = "tool-gateway-kgateway-metrics-binding"
+const metricsRoleBindingName = "tool-gateway-agentgateway-metrics-binding"
 
 // clusterRoleMetricsReader is the name of the ClusterRole that allows reading metrics
-const clusterRoleMetricsReader = "tool-gateway-kgateway-metrics-reader"
+const clusterRoleMetricsReader = "tool-gateway-agentgateway-metrics-reader"
 
 var _ = Describe("Manager", Ordered, func() {
 

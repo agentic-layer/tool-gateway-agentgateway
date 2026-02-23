@@ -55,7 +55,7 @@ var _ = Describe("ToolGateway Controller", func() {
 					Name: "test-class",
 				},
 				Spec: agentruntimev1alpha1.ToolGatewayClassSpec{
-					Controller: "runtime.agentic-layer.ai/tool-gateway-kgateway-controller",
+					Controller: "runtime.agentic-layer.ai/tool-gateway-agentgateway-controller",
 				},
 			}
 			Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
@@ -67,7 +67,7 @@ var _ = Describe("ToolGateway Controller", func() {
 					Name: "test-class-2",
 				},
 				Spec: agentruntimev1alpha1.ToolGatewayClassSpec{
-					Controller: "runtime.agentic-layer.ai/tool-gateway-kgateway-controller",
+					Controller: "runtime.agentic-layer.ai/tool-gateway-agentgateway-controller",
 				},
 			}
 			Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
@@ -142,7 +142,7 @@ var _ = Describe("ToolGateway Controller", func() {
 					Name: "test-class-drift",
 				},
 				Spec: agentruntimev1alpha1.ToolGatewayClassSpec{
-					Controller: "runtime.agentic-layer.ai/tool-gateway-kgateway-controller",
+					Controller: "runtime.agentic-layer.ai/tool-gateway-agentgateway-controller",
 				},
 			}
 			Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())

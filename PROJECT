@@ -8,6 +8,6 @@ layout:
 plugins:
   manifests.sdk.operatorframework.io/v2: {}
   scorecard.sdk.operatorframework.io/v2: {}
-projectName: tool-gateway-kgateway
-repo: github.com/agentic-layer/tool-gateway-kgateway
+projectName: tool-gateway-agentgateway
+repo: github.com/agentic-layer/tool-gateway-agentgateway
 version: "3"

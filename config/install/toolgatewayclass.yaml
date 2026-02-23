@@ -1,8 +1,8 @@
 apiVersion: runtime.agentic-layer.ai/v1alpha1
 kind: ToolGatewayClass
 metadata:
-  name: kgateway
+  name: agentgateway
   annotations:
     toolgatewayclass.kubernetes.io/is-default-class: "true"
 spec:
-  controller: runtime.agentic-layer.ai/tool-gateway-kgateway-controller
+  controller: runtime.agentic-layer.ai/tool-gateway-agentgateway-controller

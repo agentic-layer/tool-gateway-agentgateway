@@ -1,6 +1,6 @@
-# Tool Gateway kgateway Operator
+# Tool Gateway agentgateway Operator
 
-The Tool Gateway kgateway Operator is a Kubernetes operator that manages `ToolGateway` instances based on [agentgateway/kgateway](https://github.com/agentgateway/kgateway). It provides centralized gateway management for tool workloads within the Agentic Layer ecosystem.
+The Tool Gateway agentgateway Operator is a Kubernetes operator that manages `ToolGateway` instances based on [agentgateway](https://agentgateway.dev/). It provides centralized gateway management for tool workloads within the Agentic Layer ecosystem.
 
 ## Table of Contents
 
@@ -23,7 +23,7 @@ Before working with this project, ensure you have the following tools installed 
 * **Docker**: version 20.10+ (or a compatible alternative like Podman)
 * **kubectl**: The Kubernetes command-line tool
 * **kind**: For running Kubernetes locally in Docker
-* **helm**: Helm 3+ for installing kgateway
+* **helm**: Helm 3+ for installing agentgateway
 * **make**: The build automation tool
 
 ----
@@ -36,23 +36,23 @@ Before working with this project, ensure you have the following tools installed 
 # Create local cluster
 kind create cluster
 
-# Install required dependencies (cert-manager, Gateway API CRDs, kgateway, agent-runtime)
+# Install required dependencies (cert-manager, Gateway API CRDs, agentgateway, agent-runtime)
 make install-deps
 
 # Install the Tool Gateway operator
-kubectl apply -f https://github.com/agentic-layer/tool-gateway-kgateway/releases/latest/download/install.yaml
+kubectl apply -f https://github.com/agentic-layer/tool-gateway-agentgateway/releases/latest/download/install.yaml
 ```
 
 To remove all dependencies from the cluster again:
 
 ```shell
-kubectl delete -f https://github.com/agentic-layer/tool-gateway-kgateway/releases/latest/download/install.yaml
+kubectl delete -f https://github.com/agentic-layer/tool-gateway-agentgateway/releases/latest/download/install.yaml
 make uninstall-deps
 ```
 
 ## How it Works
 
-The Tool Gateway kgateway Operator creates and manages Gateway API resources based on ToolGateway and ToolServer custom resources:
+The Tool Gateway agentgateway Operator creates and manages Gateway API resources based on ToolGateway and ToolServer custom resources:
 
 1. **Gateway Creation**: When a ToolGateway is created, the operator creates a dedicated Gateway with the same name in the same namespace as the ToolGateway with HTTP listener on port 80. Each ToolGateway has its own Gateway instance.
 
@@ -66,10 +66,10 @@ The Tool Gateway kgateway Operator creates and manages Gateway API resources bas
 
 ```
 ToolGateway (CRD)
-    ↓
+    |
 Gateway (same name and namespace)
-    ↓
-HTTPRoute (Gateway API) → AgentgatewayBackend → ToolServer
+    |
+HTTPRoute (Gateway API) -> AgentgatewayBackend -> ToolServer
 ```
 
 ## Development
@@ -88,10 +88,10 @@ make kind-load
 make deploy
 ```
 
-After a successful start, you should see the controller manager pod running in the `tool-gateway-kgateway-system` namespace.
+After a successful start, you should see the controller manager pod running in the `tool-gateway-agentgateway-system` namespace.
 
 ```bash
-kubectl get pods -n tool-gateway-kgateway-system
+kubectl get pods -n tool-gateway-agentgateway-system
 ```
 
 ## Configuration
@@ -101,11 +101,11 @@ kubectl get pods -n tool-gateway-kgateway-system
 Before creating a ToolGateway, ensure you have:
 
 1. **Gateway API CRDs** installed in your cluster
-2. **kgateway with agentgateway support** installed (see [Getting Started](#getting-started))
+2. **agentgateway support** installed (see [Getting Started](#getting-started))
 
 ### ToolGateway Configuration
 
-To create a kgateway-based gateway for your tools, define a `ToolGateway` resource:
+To create a agentgateway-based gateway for your tools, define a `ToolGateway` resource:
 
 ```yaml
 apiVersion: runtime.agentic-layer.ai/v1alpha1
@@ -114,7 +114,7 @@ metadata:
   name: my-tool-gateway
   namespace: my-namespace
 spec:
-  toolGatewayClassName: kgateway  # Optional: uses default if not specified
+  toolGatewayClassName: agentgateway  # Optional: uses default if not specified
 ```
 
 This will create a `my-tool-gateway` Gateway in the `my-namespace` namespace.
@@ -183,7 +183,7 @@ make setup-test-e2e
 make install-deps
 
 # Run E2E tests against the existing cluster
-KIND_CLUSTER=tool-gateway-kgateway-test-e2e go test ./test/e2e/ -v -ginkgo.v
+KIND_CLUSTER=tool-gateway-agentgateway-test-e2e go test ./test/e2e/ -v -ginkgo.v
 
 # Clean up test cluster when done
 make cleanup-test-e2e
@@ -224,4 +224,4 @@ The project includes sample manifests to help you get started.
 
 ## Contribution
 
-See [Contribution Guide](https://github.com/agentic-layer/tool-gateway-kgateway?tab=contributing-ov-file) for details on contribution, and the process for submitting pull requests.
+See [Contribution Guide](https://github.com/agentic-layer/tool-gateway-agentgateway?tab=contributing-ov-file) for details on contribution, and the process for submitting pull requests.

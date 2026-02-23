@@ -35,7 +35,7 @@ import (
 	agentruntimev1alpha1 "github.com/agentic-layer/agent-runtime-operator/api/v1alpha1"
 )
 
-const ToolGatewayKgatewayControllerName = "runtime.agentic-layer.ai/tool-gateway-kgateway-controller"
+const ToolGatewayAgentgatewayControllerName = "runtime.agentic-layer.ai/tool-gateway-agentgateway-controller"
 
 const (
 	agentGatewayClassName = "agentgateway"
@@ -112,26 +112,26 @@ func (r *ToolGatewayReconciler) shouldProcessToolGateway(ctx context.Context, to
 	}
 
 	// Filter to only classes managed by this controller
-	var kgatewayClasses []agentruntimev1alpha1.ToolGatewayClass
+	var agentgatewayClasses []agentruntimev1alpha1.ToolGatewayClass
 	for _, tgc := range toolGatewayClassList.Items {
-		if tgc.Spec.Controller == ToolGatewayKgatewayControllerName {
-			kgatewayClasses = append(kgatewayClasses, tgc)
+		if tgc.Spec.Controller == ToolGatewayAgentgatewayControllerName {
+			agentgatewayClasses = append(agentgatewayClasses, tgc)
 		}
 	}
 
 	// If className is explicitly set, check if it matches any of our managed classes
 	toolGatewayClassName := toolGateway.Spec.ToolGatewayClassName
 	if toolGatewayClassName != "" {
-		for _, kgc := range kgatewayClasses {
-			if kgc.Name == toolGatewayClassName {
+		for _, agc := range agentgatewayClasses {
+			if agc.Name == toolGatewayClassName {
 				return true
 			}
 		}
 	}
 
 	// Look for ToolGatewayClass with default annotation among filtered classes
-	for _, kgc := range kgatewayClasses {
-		if kgc.Annotations["toolgatewayclass.kubernetes.io/is-default-class"] == "true" {
+	for _, agc := range agentgatewayClasses {
+		if agc.Annotations["toolgatewayclass.kubernetes.io/is-default-class"] == "true" {
 			return true
 		}
 	}
@@ -226,6 +226,6 @@ func (r *ToolGatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&agentruntimev1alpha1.ToolGateway{}).
 		Owns(&gatewayv1.Gateway{}).
-		Named(ToolGatewayKgatewayControllerName).
+		Named(ToolGatewayAgentgatewayControllerName).
 		Complete(r)
 }

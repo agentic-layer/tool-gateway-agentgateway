@@ -25,7 +25,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/agentic-layer/tool-gateway-kgateway/test/utils"
+	"github.com/agentic-layer/tool-gateway-agentgateway/test/utils"
 )
 
 var _ = Describe("ToolGateway", Ordered, func() {
@@ -36,7 +36,7 @@ var _ = Describe("ToolGateway", Ordered, func() {
 		specReport := CurrentSpecReport()
 		if specReport.Failed() {
 			By("Collecting controller logs for debugging")
-			cmd := exec.Command("kubectl", "logs", "-n", "tool-gateway-kgateway-system",
+			cmd := exec.Command("kubectl", "logs", "-n", "tool-gateway-agentgateway-system",
 				"-l", "control-plane=controller-manager", "--tail=100")
 			output, _ := cmd.CombinedOutput()
 			GinkgoWriter.Printf("Controller logs:\n%s\n", string(output))
@@ -76,8 +76,8 @@ var _ = Describe("ToolGateway", Ordered, func() {
 		Eventually(func(g Gomega) {
 			var statusCode int
 			var err error
-			// kgateway service in agentgateway-system namespace handles all Gateway traffic
-			// Using port 9977 which is the kgateway HTTP port
+			// agentgateway service in agentgateway-system namespace handles all Gateway traffic
+			// Using port 9977 which is the agentgateway HTTP port
 			body, statusCode, err = utils.MakeServicePost("tool-gateway", "test-tool-gateway", 80,
 				"/test/echo-mcp-server/mcp", mcpRequest)
 			_, _ = fmt.Fprintf(GinkgoWriter, "MCP request: statusCode=%d err=%v body=%s\n", statusCode, err, string(body))
