@@ -23,6 +23,7 @@ import (
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -346,6 +347,87 @@ var _ = Describe("ToolServer Controller", func() {
 				}
 				return updatedRoute.Spec.ParentRefs[0].Name
 			}, "10s", "1s").Should(Equal(gatewayv1.ObjectName("gateway-b")))
+		})
+
+		It("should update AgentgatewayBackend when ToolServer port changes", func() {
+			toolServer := &agentruntimev1alpha1.ToolServer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-update-port",
+					Namespace: "default",
+				},
+				Spec: agentruntimev1alpha1.ToolServerSpec{
+					Image:         "test-image:latest",
+					Port:          8000,
+					Protocol:      "mcp",
+					TransportType: "http",
+				},
+			}
+			Expect(k8sClient.Create(ctx, toolServer)).To(Succeed())
+
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Name: "test-update-port", Namespace: "default"}, &agentruntimev1alpha1.ToolServer{})
+			}, "10s", "1s").Should(Succeed())
+
+			setToolGatewayRefStatus("test-update-port", "default", "test-gateway", "default")
+
+			Eventually(func() bool {
+				ts := &agentruntimev1alpha1.ToolServer{}
+				_ = k8sClient.Get(ctx, types.NamespacedName{Name: "test-update-port", Namespace: "default"}, ts)
+				return ts.Status.ToolGatewayRef != nil
+			}, "10s", "1s").Should(BeTrue())
+
+			// First reconcile – creates AgentgatewayBackend with port 8000
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: "test-update-port", Namespace: "default"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			backend := &unstructured.Unstructured{}
+			backend.SetAPIVersion("agentgateway.dev/v1alpha1")
+			backend.SetKind("AgentgatewayBackend")
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Name: "test-update-port", Namespace: "default"}, backend)
+			}, "10s", "1s").Should(Succeed())
+
+			targets, _, _ := unstructured.NestedSlice(backend.Object, "spec", "mcp", "targets")
+			Expect(targets).To(HaveLen(1))
+			firstTarget := targets[0].(map[string]interface{})
+			Expect(firstTarget["static"].(map[string]interface{})["port"]).To(Equal(int64(8000)))
+
+			// Update ToolServer port to 9000
+			ts := &agentruntimev1alpha1.ToolServer{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "test-update-port", Namespace: "default"}, ts)).To(Succeed())
+			patch := client.MergeFrom(ts.DeepCopy())
+			ts.Spec.Port = 9000
+			Expect(k8sClient.Patch(ctx, ts, patch)).To(Succeed())
+
+			Eventually(func() int32 {
+				updated := &agentruntimev1alpha1.ToolServer{}
+				_ = k8sClient.Get(ctx, types.NamespacedName{Name: "test-update-port", Namespace: "default"}, updated)
+				return updated.Spec.Port
+			}, "10s", "1s").Should(Equal(int32(9000)))
+
+			// Second reconcile – should update AgentgatewayBackend port to 9000
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: "test-update-port", Namespace: "default"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			updatedBackend := &unstructured.Unstructured{}
+			updatedBackend.SetAPIVersion("agentgateway.dev/v1alpha1")
+			updatedBackend.SetKind("AgentgatewayBackend")
+			Eventually(func() int64 {
+				_ = k8sClient.Get(ctx, types.NamespacedName{Name: "test-update-port", Namespace: "default"}, updatedBackend)
+				targets, _, _ := unstructured.NestedSlice(updatedBackend.Object, "spec", "mcp", "targets")
+				if len(targets) == 0 {
+					return 0
+				}
+				port, _, _ := unstructured.NestedInt64(
+					targets[0].(map[string]interface{}),
+					"static", "port",
+				)
+				return port
+			}, "10s", "1s").Should(Equal(int64(9000)))
 		})
 
 		It("should return nil when ToolServer is not found", func() {
