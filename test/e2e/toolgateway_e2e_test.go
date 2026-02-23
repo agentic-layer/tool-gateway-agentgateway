@@ -18,6 +18,7 @@ package e2e
 
 import (
 	"encoding/json"
+	"fmt"
 	"os/exec"
 	"time"
 
@@ -79,13 +80,14 @@ var _ = Describe("ToolGateway", Ordered, func() {
 			// Using port 9977 which is the kgateway HTTP port
 			body, statusCode, err = utils.MakeServicePost("tool-gateway", "test-tool-gateway", 80,
 				"/test/echo-mcp-server/mcp", mcpRequest)
+			_, _ = fmt.Fprintf(GinkgoWriter, "MCP request: statusCode=%d err=%v body=%s\n", statusCode, err, string(body))
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(statusCode).To(Equal(200))
 		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "Failed to send MCP request to gateway")
 
 		By("verifying MCP response")
 		var responseMap map[string]interface{}
-		err := json.Unmarshal(body, &responseMap)
+		err := json.Unmarshal(utils.ParseSSEBody(body), &responseMap)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(responseMap["jsonrpc"]).To(Equal("2.0"))
 		Expect(responseMap["id"]).To(BeEquivalentTo(1))

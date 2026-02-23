@@ -115,7 +115,7 @@ func (r *ToolServerReconciler) ensureAgentgatewayBackend(
 	backend.SetName(toolServer.Name)
 	backend.SetNamespace(toolServer.Namespace)
 
-	op, err := controllerutil.CreateOrUpdate(ctx, r.Client, backend, func() error {
+	op, err := controllerutil.CreateOrPatch(ctx, r.Client, backend, func() error {
 		// Set owner reference to ToolServer for automatic cleanup
 		if err := controllerutil.SetControllerReference(toolServer, backend, r.Scheme); err != nil {
 			return fmt.Errorf("failed to set owner reference: %w", err)
@@ -176,7 +176,7 @@ func (r *ToolServerReconciler) ensureHTTPRoute(
 		},
 	}
 
-	op, err := controllerutil.CreateOrUpdate(ctx, r.Client, route, func() error {
+	op, err := controllerutil.CreateOrPatch(ctx, r.Client, route, func() error {
 		// Set owner reference to the ToolServer for automatic cleanup
 		if err := controllerutil.SetControllerReference(toolServer, route, r.Scheme); err != nil {
 			return err

@@ -150,7 +150,7 @@ func (r *ToolGatewayReconciler) ensureGateway(ctx context.Context, toolGateway *
 		},
 	}
 
-	op, err := controllerutil.CreateOrUpdate(ctx, r.Client, gateway, func() error {
+	op, err := controllerutil.CreateOrPatch(ctx, r.Client, gateway, func() error {
 		// Set owner reference
 		if err := controllerutil.SetControllerReference(toolGateway, gateway, r.Scheme); err != nil {
 			return err
