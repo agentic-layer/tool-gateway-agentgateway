@@ -290,7 +290,7 @@ func (r *ToolGatewayReconciler) getToolServersForGateway(ctx context.Context, to
 	return result, nil
 }
 
-// ensureNamespaceMultiplexBackend creates a multiplex backend for all toolservers in the gateway's namespace
+// ensureNamespaceMultiplexBackend creates a multiplex backend for all ToolServers in the gateway's namespace
 func (r *ToolGatewayReconciler) ensureNamespaceMultiplexBackend(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway, toolServers []agentruntimev1alpha1.ToolServer) error {
 	log := logf.FromContext(ctx)
 
@@ -319,7 +319,7 @@ func (r *ToolGatewayReconciler) ensureNamespaceMultiplexBackend(ctx context.Cont
 			return fmt.Errorf("failed to set owner reference: %w", err)
 		}
 
-		// Build targets list for all toolservers in namespace
+		// Build targets list for all ToolServers in namespace
 		targets := make([]interface{}, 0, len(namespacedServers))
 		for _, ts := range namespacedServers {
 			targets = append(targets, map[string]interface{}{
@@ -436,7 +436,7 @@ func (r *ToolGatewayReconciler) ensureNamespaceMultiplexRoute(ctx context.Contex
 	return nil
 }
 
-// ensureRootMultiplexBackend creates a multiplex backend for all toolservers
+// ensureRootMultiplexBackend creates a multiplex backend for all ToolServers
 func (r *ToolGatewayReconciler) ensureRootMultiplexBackend(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway, toolServers []agentruntimev1alpha1.ToolServer) error {
 	log := logf.FromContext(ctx)
 
@@ -452,7 +452,7 @@ func (r *ToolGatewayReconciler) ensureRootMultiplexBackend(ctx context.Context, 
 			return fmt.Errorf("failed to set owner reference: %w", err)
 		}
 
-		// Build targets list for all toolservers
+		// Build targets list for all ToolServers
 		targets := make([]interface{}, 0, len(toolServers))
 		for _, ts := range toolServers {
 			targets = append(targets, map[string]interface{}{
