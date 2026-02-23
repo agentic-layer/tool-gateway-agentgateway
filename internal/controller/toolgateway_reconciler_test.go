@@ -21,6 +21,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -247,6 +248,131 @@ var _ = Describe("ToolGateway Controller", func() {
 				Name:      "test-wrong-controller",
 				Namespace: "default",
 			}, gateway)
+			Expect(err).To(HaveOccurred())
+		})
+
+		It("should create multiplex routes when ToolServers are available", func() {
+			toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-class-multiplex",
+				},
+				Spec: agentruntimev1alpha1.ToolGatewayClassSpec{
+					Controller: "runtime.agentic-layer.ai/tool-gateway-agentgateway-controller",
+				},
+			}
+			Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
+
+			toolGateway := &agentruntimev1alpha1.ToolGateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-multiplex-gateway",
+					Namespace: "default",
+				},
+				Spec: agentruntimev1alpha1.ToolGatewaySpec{
+					ToolGatewayClassName: "test-class-multiplex",
+				},
+			}
+			Expect(k8sClient.Create(ctx, toolGateway)).To(Succeed())
+
+			// Create a ToolServer that references this gateway
+			toolServer := &agentruntimev1alpha1.ToolServer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-mcp-server",
+					Namespace: "default",
+				},
+				Spec: agentruntimev1alpha1.ToolServerSpec{
+					Protocol:      "mcp",
+					TransportType: "http",
+					Image:         "test-image",
+					Port:          8000,
+				},
+			}
+			Expect(k8sClient.Create(ctx, toolServer)).To(Succeed())
+
+			// Set ToolGatewayRef in status
+			Eventually(func() error {
+				ts := &agentruntimev1alpha1.ToolServer{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: "test-mcp-server", Namespace: "default"}, ts); err != nil {
+					return err
+				}
+				ts.Status.ToolGatewayRef = &corev1.ObjectReference{
+					Name:      "test-multiplex-gateway",
+					Namespace: "default",
+				}
+				return k8sClient.Status().Update(ctx, ts)
+			}, "10s", "1s").Should(Succeed())
+
+			// Reconcile ToolGateway
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "test-multiplex-gateway",
+					Namespace: "default",
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Check that multiplex routes were created
+			// Root route (/mcp)
+			rootRoute := &gatewayv1.HTTPRoute{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Name:      "test-multiplex-gateway-multiplex-root",
+					Namespace: "default",
+				}, rootRoute)
+			}, "10s", "1s").Should(Succeed())
+			Expect(rootRoute.Spec.Rules).To(HaveLen(1))
+			Expect(rootRoute.Spec.Rules[0].Matches).To(HaveLen(1))
+			Expect(*rootRoute.Spec.Rules[0].Matches[0].Path.Value).To(Equal("/mcp"))
+
+			// Namespace route (/<namespace>/mcp)
+			nsRoute := &gatewayv1.HTTPRoute{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Name:      "test-multiplex-gateway-multiplex-ns",
+					Namespace: "default",
+				}, nsRoute)
+			}, "10s", "1s").Should(Succeed())
+			Expect(nsRoute.Spec.Rules).To(HaveLen(1))
+			Expect(nsRoute.Spec.Rules[0].Matches).To(HaveLen(1))
+			Expect(*nsRoute.Spec.Rules[0].Matches[0].Path.Value).To(Equal("/default/mcp"))
+		})
+
+		It("should skip multiplex routes when no ToolServers are available", func() {
+			toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-class-no-servers",
+				},
+				Spec: agentruntimev1alpha1.ToolGatewayClassSpec{
+					Controller: "runtime.agentic-layer.ai/tool-gateway-agentgateway-controller",
+				},
+			}
+			Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
+
+			toolGateway := &agentruntimev1alpha1.ToolGateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-no-servers-gateway",
+					Namespace: "default",
+				},
+				Spec: agentruntimev1alpha1.ToolGatewaySpec{
+					ToolGatewayClassName: "test-class-no-servers",
+				},
+			}
+			Expect(k8sClient.Create(ctx, toolGateway)).To(Succeed())
+
+			// Reconcile ToolGateway without any ToolServers
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "test-no-servers-gateway",
+					Namespace: "default",
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Multiplex routes should not be created
+			rootRoute := &gatewayv1.HTTPRoute{}
+			err = k8sClient.Get(ctx, types.NamespacedName{
+				Name:      "test-no-servers-gateway-multiplex-root",
+				Namespace: "default",
+			}, rootRoute)
 			Expect(err).To(HaveOccurred())
 		})
 	})
