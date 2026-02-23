@@ -3,7 +3,7 @@ module github.com/agentic-layer/tool-gateway-kgateway
 go 1.24.0
 
 require (
-	github.com/agentic-layer/agent-runtime-operator v0.18.2
+	github.com/agentic-layer/agent-runtime-operator v0.18.3
 	github.com/onsi/ginkgo/v2 v2.28.1
 	github.com/onsi/gomega v1.39.1
 	k8s.io/api v0.34.3

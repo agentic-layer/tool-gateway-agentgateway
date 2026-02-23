@@ -46,8 +46,6 @@ type ToolServerReconciler struct {
 }
 
 // +kubebuilder:rbac:groups=runtime.agentic-layer.ai,resources=toolservers,verbs=get;list;watch
-// +kubebuilder:rbac:groups=runtime.agentic-layer.ai,resources=toolservers/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=runtime.agentic-layer.ai,resources=toolgateways,verbs=get;list;watch
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=agentgateway.dev,resources=agentgatewaybackends,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
@@ -72,14 +70,10 @@ func (r *ToolServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		"name", toolServer.Name,
 		"namespace", toolServer.Namespace)
 
-	// Find the ToolGateway to use
-	toolGateway, err := r.findToolGateway(ctx, &toolServer)
-	if err != nil {
-		log.Error(err, "Failed to find ToolGateway")
-		return ctrl.Result{}, err
-	}
-	if toolGateway == nil {
-		log.Info("No ToolGateway found, skipping reconciliation")
+	// Read ToolGateway reference from status (set by agent-runtime-operator)
+	gatewayRef := toolServer.Status.ToolGatewayRef
+	if gatewayRef == nil {
+		log.Info("No ToolGatewayRef in status yet, skipping reconciliation")
 		return ctrl.Result{}, nil
 	}
 
@@ -98,63 +92,13 @@ func (r *ToolServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	path := fmt.Sprintf("/%s/%s%s", toolServer.Namespace, toolServer.Name, suffix)
 
 	// Create or update HTTPRoute
-	if err := r.ensureHTTPRoute(ctx, &toolServer, toolGateway, path); err != nil {
+	if err := r.ensureHTTPRoute(ctx, &toolServer, gatewayRef, path); err != nil {
 		log.Error(err, "Failed to ensure HTTPRoute")
 		r.Recorder.Event(&toolServer, "Warning", "RouteFailed", err.Error())
 		return ctrl.Result{}, err
 	}
 
-	// Update ToolServer status with gateway URL
-	if err := r.updateStatus(ctx, &toolServer, toolGateway, path); err != nil {
-		log.Error(err, "Failed to update ToolServer status")
-		return ctrl.Result{}, err
-	}
-
 	return ctrl.Result{}, nil
-}
-
-// findToolGateway finds a ToolGateway to use for this ToolServer
-// It uses the ToolGatewayRef from the ToolServer spec if specified,
-// otherwise tries to find a default ToolGateway in the cluster
-func (r *ToolServerReconciler) findToolGateway(ctx context.Context, toolServer *agentruntimev1alpha1.ToolServer) (*agentruntimev1alpha1.ToolGateway, error) {
-	log := logf.FromContext(ctx)
-
-	// If ToolGatewayRef is specified, use it
-	if toolServer.Spec.ToolGatewayRef != nil {
-		ref := toolServer.Spec.ToolGatewayRef
-
-		// Default namespace to ToolServer's namespace if not specified
-		namespace := ref.Namespace
-		if namespace == "" {
-			namespace = toolServer.Namespace
-		}
-
-		toolGateway := &agentruntimev1alpha1.ToolGateway{}
-		if err := r.Get(ctx, client.ObjectKey{
-			Name:      ref.Name,
-			Namespace: namespace,
-		}, toolGateway); err != nil {
-			return nil, fmt.Errorf("failed to get referenced ToolGateway %s/%s: %w", namespace, ref.Name, err)
-		}
-
-		log.Info("Using referenced ToolGateway", "name", toolGateway.Name, "namespace", toolGateway.Namespace)
-		return toolGateway, nil
-	}
-
-	// If no ToolGatewayRef specified, try to find a default ToolGateway
-	var toolGatewayList agentruntimev1alpha1.ToolGatewayList
-	if err := r.List(ctx, &toolGatewayList); err != nil {
-		return nil, fmt.Errorf("failed to list ToolGateways: %w", err)
-	}
-
-	if len(toolGatewayList.Items) == 0 {
-		log.Info("No ToolGateways found")
-		return nil, nil
-	}
-
-	// Use the first one as default
-	log.Info("Using default ToolGateway", "name", toolGatewayList.Items[0].Name, "namespace", toolGatewayList.Items[0].Namespace)
-	return &toolGatewayList.Items[0], nil
 }
 
 // ensureAgentgatewayBackend creates or updates an AgentgatewayBackend for a ToolServer
@@ -219,7 +163,7 @@ func (r *ToolServerReconciler) ensureAgentgatewayBackend(
 func (r *ToolServerReconciler) ensureHTTPRoute(
 	ctx context.Context,
 	toolServer *agentruntimev1alpha1.ToolServer,
-	toolGateway *agentruntimev1alpha1.ToolGateway,
+	gatewayRef *corev1.ObjectReference,
 	path string,
 ) error {
 	log := logf.FromContext(ctx)
@@ -244,8 +188,8 @@ func (r *ToolServerReconciler) ensureHTTPRoute(
 			CommonRouteSpec: gatewayv1.CommonRouteSpec{
 				ParentRefs: []gatewayv1.ParentReference{
 					{
-						Name:      gatewayv1.ObjectName(toolGateway.Name),
-						Namespace: ptr.To(gatewayv1.Namespace(toolGateway.Namespace)),
+						Name:      gatewayv1.ObjectName(gatewayRef.Name),
+						Namespace: ptr.To(gatewayv1.Namespace(gatewayRef.Namespace)),
 					},
 				},
 			},
@@ -287,29 +231,13 @@ func (r *ToolServerReconciler) ensureHTTPRoute(
 	switch op {
 	case controllerutil.OperationResultCreated:
 		r.Recorder.Event(toolServer, "Normal", "RouteCreated",
-			fmt.Sprintf("Created HTTPRoute %s for Gateway %s/%s", route.Name, toolGateway.Namespace, toolGateway.Name))
+			fmt.Sprintf("Created HTTPRoute %s for Gateway %s/%s", route.Name, gatewayRef.Namespace, gatewayRef.Name))
 	case controllerutil.OperationResultUpdated:
 		r.Recorder.Event(toolServer, "Normal", "RouteUpdated",
-			fmt.Sprintf("Updated HTTPRoute %s for Gateway %s/%s", route.Name, toolGateway.Namespace, toolGateway.Name))
+			fmt.Sprintf("Updated HTTPRoute %s for Gateway %s/%s", route.Name, gatewayRef.Namespace, gatewayRef.Name))
 	}
 
 	return nil
-}
-
-// updateStatus updates the ToolServer status with the internal gateway URL
-func (r *ToolServerReconciler) updateStatus(
-	ctx context.Context,
-	toolServer *agentruntimev1alpha1.ToolServer,
-	toolGateway *agentruntimev1alpha1.ToolGateway,
-	path string,
-) error {
-	toolServer.Status.Url = fmt.Sprintf("http://%s.%s.svc.cluster.local%s",
-		toolGateway.Name, toolGateway.Namespace, path)
-	toolServer.Status.ToolGatewayRef = &corev1.ObjectReference{
-		Name:      toolGateway.Name,
-		Namespace: toolGateway.Namespace,
-	}
-	return r.Status().Update(ctx, toolServer)
 }
 
 // SetupWithManager sets up the controller with the Manager.

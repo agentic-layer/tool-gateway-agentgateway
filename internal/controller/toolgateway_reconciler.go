@@ -21,6 +21,7 @@ import (
 	"fmt"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
@@ -84,6 +85,13 @@ func (r *ToolGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if err := r.ensureGateway(ctx, &toolGateway); err != nil {
 		log.Error(err, "Failed to ensure Gateway")
 		r.Recorder.Event(&toolGateway, "Warning", "GatewayFailed", err.Error())
+		_ = r.updateStatus(ctx, &toolGateway, err)
+		return ctrl.Result{}, err
+	}
+
+	// Update ToolGateway status with cluster-local URL and Ready condition
+	if err := r.updateStatus(ctx, &toolGateway, nil); err != nil {
+		log.Error(err, "Failed to update ToolGateway status")
 		return ctrl.Result{}, err
 	}
 
@@ -184,6 +192,33 @@ func (r *ToolGatewayReconciler) ensureGateway(ctx context.Context, toolGateway *
 	}
 
 	return nil
+}
+
+// updateStatus patches the ToolGateway status with the cluster-local URL and a Ready condition.
+// reconcileErr is non-nil when called after a reconciliation failure.
+func (r *ToolGatewayReconciler) updateStatus(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway, reconcileErr error) error {
+	patch := client.MergeFrom(toolGateway.DeepCopy())
+
+	if reconcileErr == nil {
+		toolGateway.Status.Url = fmt.Sprintf("http://%s.%s.svc.cluster.local", toolGateway.Name, toolGateway.Namespace)
+		apimeta.SetStatusCondition(&toolGateway.Status.Conditions, metav1.Condition{
+			Type:               "Ready",
+			Status:             metav1.ConditionTrue,
+			Reason:             "GatewayProgrammed",
+			Message:            "Gateway has been created and configured",
+			ObservedGeneration: toolGateway.Generation,
+		})
+	} else {
+		apimeta.SetStatusCondition(&toolGateway.Status.Conditions, metav1.Condition{
+			Type:               "Ready",
+			Status:             metav1.ConditionFalse,
+			Reason:             "GatewayFailed",
+			Message:            reconcileErr.Error(),
+			ObservedGeneration: toolGateway.Generation,
+		})
+	}
+
+	return r.Status().Patch(ctx, toolGateway, patch)
 }
 
 // SetupWithManager sets up the controller with the Manager.

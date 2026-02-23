@@ -59,7 +59,6 @@ rules:
   - runtime.agentic-layer.ai
   resources:
   - toolgateways/status
-  - toolservers/status
   verbs:
   - get
   - patch

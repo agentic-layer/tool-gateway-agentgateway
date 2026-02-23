@@ -21,6 +21,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
@@ -115,6 +116,14 @@ var _ = Describe("ToolGateway Controller", func() {
 			Expect(gateway.OwnerReferences).To(HaveLen(1))
 			Expect(gateway.OwnerReferences[0].Name).To(Equal("test-basic-gateway"))
 			Expect(gateway.OwnerReferences[0].Kind).To(Equal("ToolGateway"))
+
+			// Check status URL and Ready condition
+			updated := &agentruntimev1alpha1.ToolGateway{}
+			Eventually(func() bool {
+				_ = k8sClient.Get(ctx, types.NamespacedName{Name: "test-basic-gateway", Namespace: "default"}, updated)
+				return apimeta.IsStatusConditionTrue(updated.Status.Conditions, "Ready")
+			}, "10s", "1s").Should(BeTrue())
+			Expect(updated.Status.Url).To(Equal("http://test-basic-gateway.default.svc.cluster.local"))
 
 			// Second reconcile should be idempotent
 			_, err = reconciler.Reconcile(ctx, reconcile.Request{

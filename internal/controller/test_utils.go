@@ -22,6 +22,7 @@ import (
 	agentruntimev1alpha1 "github.com/agentic-layer/agent-runtime-operator/api/v1alpha1"
 	"github.com/onsi/gomega"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
 // cleanupTestResources cleans up all test resources in the specified namespace.
@@ -46,5 +47,12 @@ func cleanupTestResources(ctx context.Context, k8sClient client.Client, namespac
 	gomega.Expect(k8sClient.List(ctx, toolGatewayClassList)).To(gomega.Succeed())
 	for i := range toolGatewayClassList.Items {
 		_ = k8sClient.Delete(ctx, &toolGatewayClassList.Items[i])
+	}
+
+	// Clean up all HTTPRoutes in the namespace
+	httpRouteList := &gatewayv1.HTTPRouteList{}
+	gomega.Expect(k8sClient.List(ctx, httpRouteList, &client.ListOptions{Namespace: namespace})).To(gomega.Succeed())
+	for i := range httpRouteList.Items {
+		_ = k8sClient.Delete(ctx, &httpRouteList.Items[i])
 	}
 }
