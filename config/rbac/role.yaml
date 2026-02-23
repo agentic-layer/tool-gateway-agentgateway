@@ -7,9 +7,14 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - configmaps
-  - serviceaccounts
-  - services
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - agentgateway.dev
+  resources:
+  - agentgatewaybackends
   verbs:
   - create
   - delete
@@ -19,24 +24,10 @@ rules:
   - update
   - watch
 - apiGroups:
-  - ""
+  - gateway.networking.k8s.io
   resources:
-  - events
-  verbs:
-  - create
-  - patch
-- apiGroups:
-  - ""
-  resources:
-  - secrets
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - apps
-  resources:
-  - deployments
+  - gateways
+  - httproutes
   verbs:
   - create
   - delete
@@ -49,7 +40,6 @@ rules:
   - runtime.agentic-layer.ai
   resources:
   - toolgatewayclasses
-  - toolgateways
   - toolservers
   verbs:
   - get
@@ -58,6 +48,18 @@ rules:
 - apiGroups:
   - runtime.agentic-layer.ai
   resources:
+  - toolgateways
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - runtime.agentic-layer.ai
+  resources:
   - toolgateways/status
   verbs:
   - get
+  - patch
+  - update

@@ -18,25 +18,28 @@ package controller
 
 import (
 	"context"
+	"fmt"
 
-	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	agentruntimev1alpha1 "github.com/agentic-layer/agent-runtime-operator/api/v1alpha1"
 )
 
 const ToolGatewayKgatewayControllerName = "runtime.agentic-layer.ai/tool-gateway-kgateway-controller"
 
-// Version set at build time using ldflags
-var Version = "dev"
+const (
+	agentGatewayClassName = "agentgateway"
+)
 
 // ToolGatewayReconciler reconciles a ToolGateway object
 type ToolGatewayReconciler struct {
@@ -45,16 +48,11 @@ type ToolGatewayReconciler struct {
 	Recorder record.EventRecorder
 }
 
-// +kubebuilder:rbac:groups=runtime.agentic-layer.ai,resources=toolgateways,verbs=get;list;watch
-// +kubebuilder:rbac:groups=runtime.agentic-layer.ai,resources=toolgateways/status,verbs=get
+// +kubebuilder:rbac:groups=runtime.agentic-layer.ai,resources=toolgateways,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=runtime.agentic-layer.ai,resources=toolgateways/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=runtime.agentic-layer.ai,resources=toolgatewayclasses,verbs=get;list;watch
-// +kubebuilder:rbac:groups=runtime.agentic-layer.ai,resources=toolservers,verbs=get;list;watch
-// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
-// +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -83,20 +81,17 @@ func (r *ToolGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, nil
 	}
 
-	// Get all ToolServer resources
-	if _, err := r.getToolServers(ctx); err != nil {
-		log.Error(err, "Failed to get ToolServers")
+	// Create or update the Gateway for this ToolGateway
+	if err := r.ensureGateway(ctx, &toolGateway); err != nil {
+		log.Error(err, "Failed to ensure Gateway")
+		r.Recorder.Event(&toolGateway, "Warning", "GatewayFailed", err.Error())
+		_ = r.updateStatus(ctx, &toolGateway, err)
 		return ctrl.Result{}, err
 	}
 
-	// TODO: Implement resource creation
-	if err := r.ensureConfigMap(ctx, &toolGateway); err != nil {
-		return ctrl.Result{}, err
-	}
-	if err := r.ensureDeployment(ctx, &toolGateway); err != nil {
-		return ctrl.Result{}, err
-	}
-	if err := r.ensureService(ctx, &toolGateway); err != nil {
+	// Update ToolGateway status with cluster-local URL and Ready condition
+	if err := r.updateStatus(ctx, &toolGateway, nil); err != nil {
+		log.Error(err, "Failed to update ToolGateway status")
 		return ctrl.Result{}, err
 	}
 
@@ -110,7 +105,9 @@ func (r *ToolGatewayReconciler) shouldProcessToolGateway(ctx context.Context, to
 	// List all ToolGatewayClasses
 	var toolGatewayClassList agentruntimev1alpha1.ToolGatewayClassList
 	if err := r.List(ctx, &toolGatewayClassList); err != nil {
-		log.Info("Cannot list ToolGatewayClasses, skipping to avoid errors")
+		log.Error(err, "Failed to list ToolGatewayClasses")
+		r.Recorder.Event(toolGateway, "Warning", "ListFailed",
+			fmt.Sprintf("Failed to list ToolGatewayClasses: %v", err))
 		return false
 	}
 
@@ -142,71 +139,93 @@ func (r *ToolGatewayReconciler) shouldProcessToolGateway(ctx context.Context, to
 	return false
 }
 
-// getToolServers queries all ToolServer resources across all namespaces
-func (r *ToolGatewayReconciler) getToolServers(ctx context.Context) ([]*agentruntimev1alpha1.ToolServer, error) {
-	var toolServerList agentruntimev1alpha1.ToolServerList
-	if err := r.List(ctx, &toolServerList); err != nil {
-		return nil, err
+// ensureGateway creates or updates the Gateway for this ToolGateway
+func (r *ToolGatewayReconciler) ensureGateway(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway) error {
+	log := logf.FromContext(ctx)
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      toolGateway.Name,
+			Namespace: toolGateway.Namespace,
+		},
 	}
 
-	toolServers := make([]*agentruntimev1alpha1.ToolServer, len(toolServerList.Items))
-	for i := range toolServerList.Items {
-		toolServers[i] = &toolServerList.Items[i]
-	}
+	op, err := controllerutil.CreateOrPatch(ctx, r.Client, gateway, func() error {
+		// Set owner reference
+		if err := controllerutil.SetControllerReference(toolGateway, gateway, r.Scheme); err != nil {
+			return err
+		}
 
-	return toolServers, nil
-}
-
-// ensureConfigMap creates or updates the ConfigMap for the ToolGateway
-func (r *ToolGatewayReconciler) ensureConfigMap(_ context.Context, _ *agentruntimev1alpha1.ToolGateway) error {
-	// TODO: Implement ConfigMap creation
-	return nil
-}
-
-// ensureDeployment creates or updates the Deployment for the ToolGateway
-func (r *ToolGatewayReconciler) ensureDeployment(_ context.Context, _ *agentruntimev1alpha1.ToolGateway) error {
-	// TODO: Implement Deployment creation
-	return nil
-}
-
-// ensureService creates or updates the Service for the ToolGateway
-func (r *ToolGatewayReconciler) ensureService(_ context.Context, _ *agentruntimev1alpha1.ToolGateway) error {
-	// TODO: Implement Service creation
-	return nil
-}
-
-// findToolGatewaysForToolServer returns all ToolGateway resources that need to be reconciled
-// when a ToolServer changes. Since all gateways discover ToolServers across all namespaces,
-// any ToolServer change affects all ToolGateway resources.
-func (r *ToolGatewayReconciler) findToolGatewaysForToolServer(ctx context.Context, _ client.Object) []ctrl.Request {
-	var toolGatewayList agentruntimev1alpha1.ToolGatewayList
-	if err := r.List(ctx, &toolGatewayList); err != nil {
-		return []ctrl.Request{}
-	}
-
-	requests := make([]ctrl.Request, len(toolGatewayList.Items))
-	for i, gw := range toolGatewayList.Items {
-		requests[i] = ctrl.Request{
-			NamespacedName: types.NamespacedName{
-				Name:      gw.Name,
-				Namespace: gw.Namespace,
+		// Set the gateway specification
+		gateway.Spec = gatewayv1.GatewaySpec{
+			GatewayClassName: agentGatewayClassName,
+			Listeners: []gatewayv1.Listener{
+				{
+					Name:     "http",
+					Protocol: gatewayv1.HTTPProtocolType,
+					Port:     gatewayv1.PortNumber(80),
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{
+							From: ptr.To(gatewayv1.NamespacesFromAll),
+						},
+					},
+				},
 			},
 		}
+		return nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to create or update Gateway: %w", err)
 	}
-	return requests
+
+	log.Info("Gateway reconciled", "operation", op, "name", gateway.Name, "namespace", gateway.Namespace)
+
+	// Record event for user visibility
+	switch op {
+	case controllerutil.OperationResultCreated:
+		r.Recorder.Event(toolGateway, "Normal", "GatewayCreated",
+			fmt.Sprintf("Created Gateway %s", gateway.Name))
+	case controllerutil.OperationResultUpdated:
+		r.Recorder.Event(toolGateway, "Normal", "GatewayUpdated",
+			fmt.Sprintf("Updated Gateway %s", gateway.Name))
+	}
+
+	return nil
+}
+
+// updateStatus patches the ToolGateway status with the cluster-local URL and a Ready condition.
+// reconcileErr is non-nil when called after a reconciliation failure.
+func (r *ToolGatewayReconciler) updateStatus(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway, reconcileErr error) error {
+	patch := client.MergeFrom(toolGateway.DeepCopy())
+
+	if reconcileErr == nil {
+		toolGateway.Status.Url = fmt.Sprintf("http://%s.%s.svc.cluster.local", toolGateway.Name, toolGateway.Namespace)
+		apimeta.SetStatusCondition(&toolGateway.Status.Conditions, metav1.Condition{
+			Type:               "Ready",
+			Status:             metav1.ConditionTrue,
+			Reason:             "GatewayProgrammed",
+			Message:            "Gateway has been created and configured",
+			ObservedGeneration: toolGateway.Generation,
+		})
+	} else {
+		apimeta.SetStatusCondition(&toolGateway.Status.Conditions, metav1.Condition{
+			Type:               "Ready",
+			Status:             metav1.ConditionFalse,
+			Reason:             "GatewayFailed",
+			Message:            reconcileErr.Error(),
+			ObservedGeneration: toolGateway.Generation,
+		})
+	}
+
+	return r.Status().Patch(ctx, toolGateway, patch)
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ToolGatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&agentruntimev1alpha1.ToolGateway{}).
-		Owns(&appsv1.Deployment{}).
-		Owns(&corev1.Service{}).
-		Owns(&corev1.ConfigMap{}).
-		Watches(
-			&agentruntimev1alpha1.ToolServer{},
-			handler.EnqueueRequestsFromMapFunc(r.findToolGatewaysForToolServer),
-		).
+		Owns(&gatewayv1.Gateway{}).
 		Named(ToolGatewayKgatewayControllerName).
 		Complete(r)
 }

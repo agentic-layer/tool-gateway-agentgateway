@@ -1,0 +1,60 @@
+# This sample demonstrates the complete deployment of a ToolGateway with an echo MCP server
+# It can be applied to a test cluster using:
+#   kubectl apply -f toolgateway_v1alpha1_toolgateway_with_toolserver.yaml
+#
+# The sample creates two namespaces:
+# - tool-gateway: Contains the ToolGateway and ToolGatewayClass
+# - test: Contains the ToolServer
+
+# Create the tool-gateway namespace for the gateway and class
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tool-gateway
+
+# Create the test namespace for the toolserver
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: test
+
+# ToolGatewayClass - defines the controller implementation
+---
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: ToolGatewayClass
+metadata:
+  name: kgateway
+  namespace: tool-gateway
+  annotations:
+    toolgatewayclass.kubernetes.io/is-default-class: "true"
+spec:
+  controller: runtime.agentic-layer.ai/tool-gateway-kgateway-controller
+
+# ToolGateway - creates a Gateway for routing to ToolServers
+---
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: ToolGateway
+metadata:
+  name: test-tool-gateway
+  namespace: tool-gateway
+spec:
+  toolGatewayClassName: kgateway
+
+# ToolServer - deploys echo MCP server with routing configuration
+---
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: ToolServer
+metadata:
+  name: echo-mcp-server
+  namespace: test
+spec:
+  protocol: mcp
+  transportType: http
+  image: ghcr.io/agentic-layer/echo-mcp-server:0.1.0
+  port: 8000
+  replicas: 1
+  toolGatewayRef:
+    name: test-tool-gateway
+    namespace: tool-gateway

@@ -23,6 +23,7 @@ Before working with this project, ensure you have the following tools installed 
 * **Docker**: version 20.10+ (or a compatible alternative like Podman)
 * **kubectl**: The Kubernetes command-line tool
 * **kind**: For running Kubernetes locally in Docker
+* **helm**: Helm 3+ for installing kgateway
 * **make**: The build automation tool
 
 ----
@@ -32,12 +33,43 @@ Before working with this project, ensure you have the following tools installed 
 **Quick Start:**
 
 ```shell
-# Create local cluster and install cert-manager
+# Create local cluster
 kind create cluster
-kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.19.1/cert-manager.yaml
+
+# Install required dependencies (cert-manager, Gateway API CRDs, kgateway, agent-runtime)
+make install-deps
 
 # Install the Tool Gateway operator
 kubectl apply -f https://github.com/agentic-layer/tool-gateway-kgateway/releases/latest/download/install.yaml
+```
+
+To remove all dependencies from the cluster again:
+
+```shell
+kubectl delete -f https://github.com/agentic-layer/tool-gateway-kgateway/releases/latest/download/install.yaml
+make uninstall-deps
+```
+
+## How it Works
+
+The Tool Gateway kgateway Operator creates and manages Gateway API resources based on ToolGateway and ToolServer custom resources:
+
+1. **Gateway Creation**: When a ToolGateway is created, the operator creates a dedicated Gateway with the same name in the same namespace as the ToolGateway with HTTP listener on port 80. Each ToolGateway has its own Gateway instance.
+
+2. **ToolServer Integration**: For each ToolServer resource, the operator creates:
+   - **AgentgatewayBackend**: Configures the MCP backend connection to the ToolServer
+   - **HTTPRoute**: Routes traffic from the gateway to the AgentgatewayBackend using path-based matching
+
+3. **Automatic Updates**: The operator watches for changes to ToolGateway and ToolServer resources and updates the corresponding Gateway API resources automatically.
+
+### Architecture
+
+```
+ToolGateway (CRD)
+    ↓
+Gateway (same name and namespace)
+    ↓
+HTTPRoute (Gateway API) → AgentgatewayBackend → ToolServer
 ```
 
 ## Development
@@ -64,6 +96,13 @@ kubectl get pods -n tool-gateway-kgateway-system
 
 ## Configuration
 
+### Prerequisites for ToolGateway
+
+Before creating a ToolGateway, ensure you have:
+
+1. **Gateway API CRDs** installed in your cluster
+2. **kgateway with agentgateway support** installed (see [Getting Started](#getting-started))
+
 ### ToolGateway Configuration
 
 To create a kgateway-based gateway for your tools, define a `ToolGateway` resource:
@@ -73,7 +112,46 @@ apiVersion: runtime.agentic-layer.ai/v1alpha1
 kind: ToolGateway
 metadata:
   name: my-tool-gateway
-spec: {}
+  namespace: my-namespace
+spec:
+  toolGatewayClassName: kgateway  # Optional: uses default if not specified
+```
+
+This will create a `my-tool-gateway` Gateway in the `my-namespace` namespace.
+
+### ToolServer Configuration
+
+Define ToolServer resources that the gateway will route to:
+
+```yaml
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: ToolServer
+metadata:
+  name: my-tool-server
+  namespace: my-namespace
+spec:
+  protocol: mcp
+  transportType: http
+  image: my-tool-server:latest
+  port: 8000
+  path: /mcp
+  replicas: 1
+```
+
+The operator will automatically create:
+- An **AgentgatewayBackend** for the ToolServer
+- An **HTTPRoute** connecting the Gateway to the backend
+
+### Accessing Your Tools
+
+Once deployed, tools are accessible via the ToolGateway's Gateway:
+
+```shell
+# Get the Gateway service endpoint (example for 'my-tool-gateway')
+kubectl get svc -n my-namespace | grep my-tool-gateway
+
+# Access your tool via the gateway
+curl http://<gateway-endpoint>/mcp
 ```
 
 ## End-to-End (E2E) Testing
@@ -100,12 +178,13 @@ If you need to run E2E tests manually or inspect the test environment:
 ```bash
 # Set up test cluster
 make setup-test-e2e
-```
-```bash
+
+# Install required dependencies
+make install-deps
+
 # Run E2E tests against the existing cluster
 KIND_CLUSTER=tool-gateway-kgateway-test-e2e go test ./test/e2e/ -v -ginkgo.v
-```
-```bash
+
 # Clean up test cluster when done
 make cleanup-test-e2e
 ```
