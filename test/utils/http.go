@@ -63,7 +63,8 @@ func PostRequestWithStatus(url string, payload any) ([]byte, int, error) {
 // PostRequestWithExtraHeaders sends a POST request with additional headers and returns
 // the response body, response headers, status code, and error.
 // Use this when you need to inspect or forward response headers (e.g. Mcp-Session-Id).
-func PostRequestWithExtraHeaders(url string, payload any, extraHeaders map[string]string) ([]byte, http.Header, int, error) {
+func PostRequestWithExtraHeaders(url string, payload any,
+	extraHeaders map[string]string) ([]byte, http.Header, int, error) {
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		return nil, nil, 0, fmt.Errorf("failed to marshal payload: %w", err)

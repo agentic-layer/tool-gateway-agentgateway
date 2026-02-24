@@ -255,21 +255,21 @@ func (r *ToolGatewayReconciler) ensureMultiplexRoutes(ctx context.Context, toolG
 		byNamespace[ts.Namespace] = append(byNamespace[ts.Namespace], ts)
 	}
 	for ns, servers := range byNamespace {
-		suffix := "ns-" + ns
-		if err := r.ensureMultiplexBackend(ctx, toolGateway, servers, suffix); err != nil {
+		name := toolGateway.Name + "-" + ns
+		if err := r.ensureMultiplexBackend(ctx, toolGateway, servers, name, ns); err != nil {
 			return fmt.Errorf("failed to ensure namespace multiplex backend for %s: %w", ns, err)
 		}
-		if err := r.ensureMultiplexRoute(ctx, toolGateway, suffix, fmt.Sprintf("/%s/mcp", ns)); err != nil {
+		if err := r.ensureMultiplexRoute(ctx, toolGateway, name, ns, fmt.Sprintf("/%s/mcp", ns)); err != nil {
 			return fmt.Errorf("failed to ensure namespace multiplex route for %s: %w", ns, err)
 		}
 	}
 
 	// Create root-level multiplex backend and route (/mcp)
-	if err := r.ensureMultiplexBackend(ctx, toolGateway, toolServers, "root"); err != nil {
+	if err := r.ensureMultiplexBackend(ctx, toolGateway, toolServers, toolGateway.Name, toolGateway.Namespace); err != nil {
 		return fmt.Errorf("failed to ensure root multiplex backend: %w", err)
 	}
 
-	if err := r.ensureMultiplexRoute(ctx, toolGateway, "root", "/mcp"); err != nil {
+	if err := r.ensureMultiplexRoute(ctx, toolGateway, toolGateway.Name, toolGateway.Namespace, "/mcp"); err != nil {
 		return fmt.Errorf("failed to ensure root multiplex route: %w", err)
 	}
 
@@ -296,20 +296,26 @@ func (r *ToolGatewayReconciler) getToolServersForGateway(ctx context.Context, to
 	return result, nil
 }
 
-// ensureMultiplexBackend creates a multiplex backend for the given ToolServers
-func (r *ToolGatewayReconciler) ensureMultiplexBackend(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway, toolServers []agentruntimev1alpha1.ToolServer, suffix string) error {
+// ensureMultiplexBackend creates a multiplex backend for the given ToolServers.
+// name and namespace specify where the AgentgatewayBackend is created.
+// Owner reference is only set when the backend is in the same namespace as the ToolGateway,
+// since Kubernetes does not support cross-namespace owner references.
+func (r *ToolGatewayReconciler) ensureMultiplexBackend(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway, toolServers []agentruntimev1alpha1.ToolServer, name, namespace string) error {
 	log := logf.FromContext(ctx)
 
 	backend := &unstructured.Unstructured{}
 	backend.SetAPIVersion("agentgateway.dev/v1alpha1")
 	backend.SetKind("AgentgatewayBackend")
-	backend.SetName(fmt.Sprintf("%s-multiplex-%s", toolGateway.Name, suffix))
-	backend.SetNamespace(toolGateway.Namespace)
+	backend.SetName(name)
+	backend.SetNamespace(namespace)
 
 	op, err := controllerutil.CreateOrPatch(ctx, r.Client, backend, func() error {
-		// Set owner reference to ToolGateway for automatic cleanup
-		if err := controllerutil.SetControllerReference(toolGateway, backend, r.Scheme); err != nil {
-			return fmt.Errorf("failed to set owner reference: %w", err)
+		// Owner reference enables automatic cleanup when the ToolGateway is deleted,
+		// but only within the same namespace (cross-namespace owner refs are not supported).
+		if namespace == toolGateway.Namespace {
+			if err := controllerutil.SetControllerReference(toolGateway, backend, r.Scheme); err != nil {
+				return fmt.Errorf("failed to set owner reference: %w", err)
+			}
 		}
 
 		// Build targets list for all ToolServers
@@ -341,7 +347,7 @@ func (r *ToolGatewayReconciler) ensureMultiplexBackend(ctx context.Context, tool
 		return fmt.Errorf("failed to create or update multiplex backend: %w", err)
 	}
 
-	log.Info("Multiplex backend reconciled", "operation", op, "name", backend.GetName(), "suffix", suffix)
+	log.Info("Multiplex backend reconciled", "operation", op, "name", backend.GetName(), "namespace", namespace)
 
 	switch op {
 	case controllerutil.OperationResultCreated:
@@ -355,21 +361,27 @@ func (r *ToolGatewayReconciler) ensureMultiplexBackend(ctx context.Context, tool
 	return nil
 }
 
-// ensureMultiplexRoute creates HTTPRoute for the given path
-func (r *ToolGatewayReconciler) ensureMultiplexRoute(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway, suffix string, path string) error {
+// ensureMultiplexRoute creates an HTTPRoute for the given path.
+// name and namespace specify where the HTTPRoute is created.
+// The co-located AgentgatewayBackend is referenced by the same name and namespace.
+// Owner reference is only set when the route is in the same namespace as the ToolGateway.
+func (r *ToolGatewayReconciler) ensureMultiplexRoute(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway, name, namespace, path string) error {
 	log := logf.FromContext(ctx)
 
 	route := &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("%s-multiplex-%s", toolGateway.Name, suffix),
-			Namespace: toolGateway.Namespace,
+			Name:      name,
+			Namespace: namespace,
 		},
 	}
 
 	op, err := controllerutil.CreateOrPatch(ctx, r.Client, route, func() error {
-		// Set owner reference to ToolGateway for automatic cleanup
-		if err := controllerutil.SetControllerReference(toolGateway, route, r.Scheme); err != nil {
-			return err
+		// Owner reference enables automatic cleanup when the ToolGateway is deleted,
+		// but only within the same namespace (cross-namespace owner refs are not supported).
+		if namespace == toolGateway.Namespace {
+			if err := controllerutil.SetControllerReference(toolGateway, route, r.Scheme); err != nil {
+				return err
+			}
 		}
 
 		pathType := gatewayv1.PathMatchPathPrefix
@@ -391,8 +403,8 @@ func (r *ToolGatewayReconciler) ensureMultiplexRoute(ctx context.Context, toolGa
 								BackendObjectReference: gatewayv1.BackendObjectReference{
 									Group:     ptr.To(gatewayv1.Group("agentgateway.dev")),
 									Kind:      ptr.To(gatewayv1.Kind("AgentgatewayBackend")),
-									Name:      gatewayv1.ObjectName(route.Name),
-									Namespace: ptr.To(gatewayv1.Namespace(toolGateway.Namespace)),
+									Name:      gatewayv1.ObjectName(name),
+									Namespace: ptr.To(gatewayv1.Namespace(namespace)),
 								},
 							},
 						},
@@ -416,7 +428,7 @@ func (r *ToolGatewayReconciler) ensureMultiplexRoute(ctx context.Context, toolGa
 		return fmt.Errorf("failed to create or update multiplex route: %w", err)
 	}
 
-	log.Info("Multiplex route reconciled", "operation", op, "name", route.Name, "path", path)
+	log.Info("Multiplex route reconciled", "operation", op, "name", route.Name, "namespace", namespace, "path", path)
 
 	switch op {
 	case controllerutil.OperationResultCreated:

@@ -103,7 +103,7 @@ var _ = Describe("ToolServer Controller", func() {
 			httpRoute := &gatewayv1.HTTPRoute{}
 			Eventually(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{
-					Name:      "test-tool-server",
+					Name:      "test-gateway-test-tool-server",
 					Namespace: "default",
 				}, httpRoute)
 			}, "10s", "1s").Should(Succeed())
@@ -161,7 +161,7 @@ var _ = Describe("ToolServer Controller", func() {
 			httpRoute := &gatewayv1.HTTPRoute{}
 			Eventually(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{
-					Name:      "test-sse-server",
+					Name:      "sse-test-gateway-test-sse-server",
 					Namespace: "default",
 				}, httpRoute)
 			}, "10s", "1s").Should(Succeed())
@@ -172,7 +172,7 @@ var _ = Describe("ToolServer Controller", func() {
 		It("should skip reconciliation when no ToolGatewayRef in status", func() {
 			toolServer := &agentruntimev1alpha1.ToolServer{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-tool-server",
+					Name:      "test-no-ref-server",
 					Namespace: "default",
 				},
 				Spec: agentruntimev1alpha1.ToolServerSpec{
@@ -186,26 +186,26 @@ var _ = Describe("ToolServer Controller", func() {
 
 			Eventually(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{
-					Name:      "test-tool-server",
+					Name:      "test-no-ref-server",
 					Namespace: "default",
 				}, &agentruntimev1alpha1.ToolServer{})
 			}, "10s", "1s").Should(Succeed())
 
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{
-					Name:      "test-tool-server",
+					Name:      "test-no-ref-server",
 					Namespace: "default",
 				},
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			// HTTPRoute should NOT be created since Status.ToolGatewayRef is nil
-			httpRoute := &gatewayv1.HTTPRoute{}
-			err = k8sClient.Get(ctx, types.NamespacedName{
-				Name:      "test-tool-server",
-				Namespace: "default",
-			}, httpRoute)
-			Expect(err).To(HaveOccurred())
+			// HTTPRoute should NOT be created since Status.ToolGatewayRef is nil —
+			// there is no gateway name to derive the route name from.
+			routeList := &gatewayv1.HTTPRouteList{}
+			Expect(k8sClient.List(ctx, routeList, client.InNamespace("default"))).To(Succeed())
+			for _, r := range routeList.Items {
+				Expect(r.Name).NotTo(ContainSubstring("test-no-ref-server"))
+			}
 		})
 
 		It("should update HTTPRoute path when ToolServer TransportType changes", func() {
@@ -243,7 +243,7 @@ var _ = Describe("ToolServer Controller", func() {
 
 			httpRoute := &gatewayv1.HTTPRoute{}
 			Eventually(func() error {
-				return k8sClient.Get(ctx, types.NamespacedName{Name: "test-update-transport", Namespace: "default"}, httpRoute)
+				return k8sClient.Get(ctx, types.NamespacedName{Name: "test-gateway-test-update-transport", Namespace: "default"}, httpRoute)
 			}, "10s", "1s").Should(Succeed())
 			Expect(httpRoute.Spec.Rules[0].Matches[0].Path.Value).To(Equal(stringPtr("/default/test-update-transport/mcp")))
 
@@ -268,7 +268,7 @@ var _ = Describe("ToolServer Controller", func() {
 
 			updatedRoute := &gatewayv1.HTTPRoute{}
 			Eventually(func() *string {
-				_ = k8sClient.Get(ctx, types.NamespacedName{Name: "test-update-transport", Namespace: "default"}, updatedRoute)
+				_ = k8sClient.Get(ctx, types.NamespacedName{Name: "test-gateway-test-update-transport", Namespace: "default"}, updatedRoute)
 				if len(updatedRoute.Spec.Rules) == 0 || len(updatedRoute.Spec.Rules[0].Matches) == 0 {
 					return nil
 				}
@@ -311,7 +311,7 @@ var _ = Describe("ToolServer Controller", func() {
 
 			httpRoute := &gatewayv1.HTTPRoute{}
 			Eventually(func() error {
-				return k8sClient.Get(ctx, types.NamespacedName{Name: "test-update-gatewayref", Namespace: "default"}, httpRoute)
+				return k8sClient.Get(ctx, types.NamespacedName{Name: "gateway-a-test-update-gatewayref", Namespace: "default"}, httpRoute)
 			}, "10s", "1s").Should(Succeed())
 			Expect(httpRoute.Spec.ParentRefs[0].Name).To(Equal(gatewayv1.ObjectName("gateway-a")))
 
@@ -333,7 +333,7 @@ var _ = Describe("ToolServer Controller", func() {
 				return updated.Status.ToolGatewayRef.Name
 			}, "10s", "1s").Should(Equal("gateway-b"))
 
-			// Second reconcile – should update HTTPRoute parent ref to gateway-b
+			// Second reconcile – creates a new route named gateway-b-test-update-gatewayref
 			_, err = reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{Name: "test-update-gatewayref", Namespace: "default"},
 			})
@@ -341,7 +341,7 @@ var _ = Describe("ToolServer Controller", func() {
 
 			updatedRoute := &gatewayv1.HTTPRoute{}
 			Eventually(func() gatewayv1.ObjectName {
-				_ = k8sClient.Get(ctx, types.NamespacedName{Name: "test-update-gatewayref", Namespace: "default"}, updatedRoute)
+				_ = k8sClient.Get(ctx, types.NamespacedName{Name: "gateway-b-test-update-gatewayref", Namespace: "default"}, updatedRoute)
 				if len(updatedRoute.Spec.ParentRefs) == 0 {
 					return ""
 				}
@@ -386,7 +386,7 @@ var _ = Describe("ToolServer Controller", func() {
 			backend.SetAPIVersion("agentgateway.dev/v1alpha1")
 			backend.SetKind("AgentgatewayBackend")
 			Eventually(func() error {
-				return k8sClient.Get(ctx, types.NamespacedName{Name: "test-update-port", Namespace: "default"}, backend)
+				return k8sClient.Get(ctx, types.NamespacedName{Name: "test-gateway-test-update-port", Namespace: "default"}, backend)
 			}, "10s", "1s").Should(Succeed())
 
 			targets, _, _ := unstructured.NestedSlice(backend.Object, "spec", "mcp", "targets")
@@ -417,7 +417,7 @@ var _ = Describe("ToolServer Controller", func() {
 			updatedBackend.SetAPIVersion("agentgateway.dev/v1alpha1")
 			updatedBackend.SetKind("AgentgatewayBackend")
 			Eventually(func() int64 {
-				_ = k8sClient.Get(ctx, types.NamespacedName{Name: "test-update-port", Namespace: "default"}, updatedBackend)
+				_ = k8sClient.Get(ctx, types.NamespacedName{Name: "test-gateway-test-update-port", Namespace: "default"}, updatedBackend)
 				targets, _, _ := unstructured.NestedSlice(updatedBackend.Object, "spec", "mcp", "targets")
 				if len(targets) == 0 {
 					return 0

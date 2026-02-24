@@ -84,15 +84,8 @@ func (r *ToolServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
-	// Compute unique path for this ToolServer
-	suffix := "/mcp"
-	if toolServer.Spec.TransportType == "sse" {
-		suffix = "/sse"
-	}
-	path := fmt.Sprintf("/%s/%s%s", toolServer.Namespace, toolServer.Name, suffix)
-
 	// Create or update HTTPRoute
-	if err := r.ensureHTTPRoute(ctx, &toolServer, gatewayRef, path); err != nil {
+	if err := r.ensureHTTPRoute(ctx, &toolServer, gatewayRef); err != nil {
 		log.Error(err, "Failed to ensure HTTPRoute")
 		r.Recorder.Event(&toolServer, "Warning", "RouteFailed", err.Error())
 		return ctrl.Result{}, err
@@ -112,7 +105,7 @@ func (r *ToolServerReconciler) ensureAgentgatewayBackend(
 	backend := &unstructured.Unstructured{}
 	backend.SetAPIVersion("agentgateway.dev/v1alpha1")
 	backend.SetKind("AgentgatewayBackend")
-	backend.SetName(toolServer.Name)
+	backend.SetName(toolServer.Status.ToolGatewayRef.Name + "-" + toolServer.Name)
 	backend.SetNamespace(toolServer.Namespace)
 
 	op, err := controllerutil.CreateOrPatch(ctx, r.Client, backend, func() error {
@@ -144,7 +137,7 @@ func (r *ToolServerReconciler) ensureAgentgatewayBackend(
 		return fmt.Errorf("failed to create or update AgentgatewayBackend: %w", err)
 	}
 
-	log.Info("AgentgatewayBackend reconciled", "operation", op, "name", toolServer.Name, "namespace", toolServer.Namespace)
+	log.Info("AgentgatewayBackend reconciled", "operation", op, "name", backend.GetName(), "namespace", toolServer.Namespace)
 
 	// Record event
 	switch op {
@@ -164,14 +157,20 @@ func (r *ToolServerReconciler) ensureHTTPRoute(
 	ctx context.Context,
 	toolServer *agentruntimev1alpha1.ToolServer,
 	gatewayRef *corev1.ObjectReference,
-	path string,
 ) error {
 	log := logf.FromContext(ctx)
+
+	// Compute unique path for this ToolServer
+	suffix := "/mcp"
+	if toolServer.Spec.TransportType == "sse" {
+		suffix = "/sse"
+	}
+	path := fmt.Sprintf("/%s/%s%s", toolServer.Namespace, toolServer.Name, suffix)
 
 	// HTTPRoute in same namespace as ToolServer, owned by ToolServer
 	route := &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      toolServer.Name,
+			Name:      gatewayRef.Name + "-" + toolServer.Name,
 			Namespace: toolServer.Namespace,
 		},
 	}
@@ -201,7 +200,7 @@ func (r *ToolServerReconciler) ensureHTTPRoute(
 								BackendObjectReference: gatewayv1.BackendObjectReference{
 									Group:     ptr.To(gatewayv1.Group("agentgateway.dev")),
 									Kind:      ptr.To(gatewayv1.Kind("AgentgatewayBackend")),
-									Name:      gatewayv1.ObjectName(toolServer.Name),
+									Name:      gatewayv1.ObjectName(gatewayRef.Name + "-" + toolServer.Name),
 									Namespace: ptr.To(gatewayv1.Namespace(toolServer.Namespace)),
 								},
 							},

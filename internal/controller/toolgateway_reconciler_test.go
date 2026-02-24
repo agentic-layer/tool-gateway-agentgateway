@@ -311,11 +311,11 @@ var _ = Describe("ToolGateway Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Check that multiplex routes were created
-			// Root route (/mcp)
+			// Root route (/mcp) — named after the ToolGateway, in the gateway namespace
 			rootRoute := &gatewayv1.HTTPRoute{}
 			Eventually(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{
-					Name:      "test-multiplex-gateway-multiplex-root",
+					Name:      "test-multiplex-gateway",
 					Namespace: "default",
 				}, rootRoute)
 			}, "10s", "1s").Should(Succeed())
@@ -323,11 +323,11 @@ var _ = Describe("ToolGateway Controller", func() {
 			Expect(rootRoute.Spec.Rules[0].Matches).To(HaveLen(1))
 			Expect(*rootRoute.Spec.Rules[0].Matches[0].Path.Value).To(Equal("/mcp"))
 
-			// Namespace route (/<namespace>/mcp)
+			// Namespace route (/<namespace>/mcp) — named <gateway>-<ns>, in the ToolServer namespace
 			nsRoute := &gatewayv1.HTTPRoute{}
 			Eventually(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{
-					Name:      "test-multiplex-gateway-multiplex-ns",
+					Name:      "test-multiplex-gateway-default",
 					Namespace: "default",
 				}, nsRoute)
 			}, "10s", "1s").Should(Succeed())
@@ -370,7 +370,7 @@ var _ = Describe("ToolGateway Controller", func() {
 			// Multiplex routes should not be created
 			rootRoute := &gatewayv1.HTTPRoute{}
 			err = k8sClient.Get(ctx, types.NamespacedName{
-				Name:      "test-no-servers-gateway-multiplex-root",
+				Name:      "test-no-servers-gateway",
 				Namespace: "default",
 			}, rootRoute)
 			Expect(err).To(HaveOccurred())
