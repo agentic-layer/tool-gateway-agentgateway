@@ -306,7 +306,7 @@ func (r *ToolGatewayReconciler) ensureNamespaceMultiplexBackend(ctx context.Cont
 		return nil
 	}
 
-	return r.ensureMultiplexBackend(ctx, toolGateway, namespacedServers, "ns", false)
+	return r.ensureMultiplexBackend(ctx, toolGateway, namespacedServers, "ns")
 }
 
 // ensureNamespaceMultiplexRoute creates HTTPRoute for /<namespace>/mcp
@@ -317,7 +317,7 @@ func (r *ToolGatewayReconciler) ensureNamespaceMultiplexRoute(ctx context.Contex
 
 // ensureRootMultiplexBackend creates a multiplex backend for all ToolServers
 func (r *ToolGatewayReconciler) ensureRootMultiplexBackend(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway, toolServers []agentruntimev1alpha1.ToolServer) error {
-	return r.ensureMultiplexBackend(ctx, toolGateway, toolServers, "root", true)
+	return r.ensureMultiplexBackend(ctx, toolGateway, toolServers, "root")
 }
 
 // ensureRootMultiplexRoute creates HTTPRoute for /mcp
@@ -326,7 +326,7 @@ func (r *ToolGatewayReconciler) ensureRootMultiplexRoute(ctx context.Context, to
 }
 
 // ensureMultiplexBackend creates a multiplex backend for the given ToolServers
-func (r *ToolGatewayReconciler) ensureMultiplexBackend(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway, toolServers []agentruntimev1alpha1.ToolServer, suffix string, includeNamespaceInTargetName bool) error {
+func (r *ToolGatewayReconciler) ensureMultiplexBackend(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway, toolServers []agentruntimev1alpha1.ToolServer, suffix string) error {
 	log := logf.FromContext(ctx)
 
 	backend := &unstructured.Unstructured{}
@@ -344,10 +344,8 @@ func (r *ToolGatewayReconciler) ensureMultiplexBackend(ctx context.Context, tool
 		// Build targets list for all ToolServers
 		targets := make([]interface{}, 0, len(toolServers))
 		for _, ts := range toolServers {
-			targetName := ts.Name
-			if includeNamespaceInTargetName {
-				targetName = fmt.Sprintf("%s-%s", ts.Namespace, ts.Name)
-			}
+			// Always include namespace in target name for uniqueness across namespaces
+			targetName := fmt.Sprintf("%s-%s", ts.Namespace, ts.Name)
 			targets = append(targets, map[string]interface{}{
 				"name": targetName,
 				"static": map[string]interface{}{
@@ -422,7 +420,7 @@ func (r *ToolGatewayReconciler) ensureMultiplexRoute(ctx context.Context, toolGa
 								BackendObjectReference: gatewayv1.BackendObjectReference{
 									Group:     ptr.To(gatewayv1.Group("agentgateway.dev")),
 									Kind:      ptr.To(gatewayv1.Kind("AgentgatewayBackend")),
-									Name:      gatewayv1.ObjectName(fmt.Sprintf("%s-multiplex-%s", toolGateway.Name, suffix)),
+									Name:      gatewayv1.ObjectName(route.Name),
 									Namespace: ptr.To(gatewayv1.Namespace(toolGateway.Namespace)),
 								},
 							},
