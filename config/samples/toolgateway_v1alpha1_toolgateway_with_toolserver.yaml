@@ -1,10 +1,7 @@
-# This sample demonstrates the complete deployment of a ToolGateway with an echo MCP server
+# This sample demonstrates a complete ToolGateway deployment with multiple MCP tool servers
+# spread across different namespaces, with path-based routing.
 # It can be applied to a test cluster using:
 #   kubectl apply -f toolgateway_v1alpha1_toolgateway_with_toolserver.yaml
-#
-# The sample creates two namespaces:
-# - tool-gateway: Contains the ToolGateway and ToolGatewayClass
-# - test: Contains the ToolServer
 
 # Create the tool-gateway namespace for the gateway and class
 ---
@@ -13,12 +10,18 @@ kind: Namespace
 metadata:
   name: tool-gateway
 
-# Create the test namespace for the toolserver
+# Create namespaces for the tool servers
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: test
+  name: namespace-a
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: namespace-b
 
 # ToolGatewayClass - defines the controller implementation
 ---
@@ -42,19 +45,74 @@ metadata:
 spec:
   toolGatewayClassName: agentgateway
 
-# ToolServer - deploys echo MCP server with routing configuration
+# ToolServer 1: server-a in namespace-a with custom tool "get_weather"
 ---
 apiVersion: runtime.agentic-layer.ai/v1alpha1
 kind: ToolServer
 metadata:
-  name: echo-mcp-server
-  namespace: test
+  name: server-a
+  namespace: namespace-a
 spec:
   protocol: mcp
   transportType: http
-  image: ghcr.io/agentic-layer/echo-mcp-server:0.1.0
+  image: ghcr.io/agentic-layer/echo-mcp-server:0.2.0
   port: 8000
   replicas: 1
+  env:
+    - name: ECHO_SERVER_NAME
+      value: "Server A"
+    - name: ECHO_TOOL_NAME
+      value: "get_weather"
+    - name: ECHO_TOOL_RESPONSE
+      value: "Sunny, 72°F"
+  toolGatewayRef:
+    name: test-tool-gateway
+    namespace: tool-gateway
+
+# ToolServer 2: server-b in namespace-a with custom tool "get_status"
+---
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: ToolServer
+metadata:
+  name: server-b
+  namespace: namespace-a
+spec:
+  protocol: mcp
+  transportType: http
+  image: ghcr.io/agentic-layer/echo-mcp-server:0.2.0
+  port: 8000
+  replicas: 1
+  env:
+    - name: ECHO_SERVER_NAME
+      value: "Server B"
+    - name: ECHO_TOOL_NAME
+      value: "get_status"
+    - name: ECHO_TOOL_RESPONSE
+      value: "All systems operational"
+  toolGatewayRef:
+    name: test-tool-gateway
+    namespace: tool-gateway
+
+# ToolServer 3: server-c in namespace-b with custom tool "get_info"
+---
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: ToolServer
+metadata:
+  name: server-c
+  namespace: namespace-b
+spec:
+  protocol: mcp
+  transportType: http
+  image: ghcr.io/agentic-layer/echo-mcp-server:0.2.0
+  port: 8000
+  replicas: 1
+  env:
+    - name: ECHO_SERVER_NAME
+      value: "Server C"
+    - name: ECHO_TOOL_NAME
+      value: "get_info"
+    - name: ECHO_TOOL_RESPONSE
+      value: "Information available"
   toolGatewayRef:
     name: test-tool-gateway
     namespace: tool-gateway

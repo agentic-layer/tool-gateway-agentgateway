@@ -17,8 +17,6 @@ limitations under the License.
 package e2e
 
 import (
-	"encoding/json"
-	"fmt"
 	"os/exec"
 	"time"
 
@@ -28,10 +26,22 @@ import (
 	"github.com/agentic-layer/tool-gateway-agentgateway/test/utils"
 )
 
-var _ = Describe("ToolGateway", Ordered, func() {
+const toolGatewaySampleFile = "config/samples/toolgateway_v1alpha1_toolgateway_with_toolserver.yaml"
 
-	// After each test, check for failures and collect logs, events,
-	// and pod descriptions for debugging.
+var toolGateway = utils.ServiceTarget{
+	Namespace:   "tool-gateway",
+	ServiceName: "test-tool-gateway",
+	Port:        80,
+}
+
+var _ = Describe("ToolGateway", func() {
+
+	BeforeEach(func() {
+		By("applying ToolGateway with ToolServer sample")
+		_, err := utils.Run(exec.Command("kubectl", "apply", "-f", toolGatewaySampleFile))
+		Expect(err).NotTo(HaveOccurred(), "Failed to apply samples")
+	})
+
 	AfterEach(func() {
 		specReport := CurrentSpecReport()
 		if specReport.Failed() {
@@ -41,56 +51,71 @@ var _ = Describe("ToolGateway", Ordered, func() {
 			output, _ := cmd.CombinedOutput()
 			GinkgoWriter.Printf("Controller logs:\n%s\n", string(output))
 		}
-	})
 
-	BeforeAll(func() {
-		By("applying ToolGateway with ToolServer sample")
-		_, err := utils.Run(exec.Command("kubectl", "apply",
-			"-f", "config/samples/toolgateway_v1alpha1_toolgateway_with_toolserver.yaml"))
-		Expect(err).NotTo(HaveOccurred(), "Failed to apply samples")
-	})
-
-	AfterAll(func() {
 		By("cleaning up test resources")
-		_, _ = utils.Run(exec.Command("kubectl", "delete",
-			"-f", "config/samples/toolgateway_v1alpha1_toolgateway_with_toolserver.yaml"))
+		_, _ = utils.Run(exec.Command("kubectl", "delete", "-f", toolGatewaySampleFile))
 	})
 
-	It("should proxy MCP requests to tool server", func() {
-		By("sending MCP initialize request to the gateway")
-		mcpRequest := map[string]interface{}{
-			"jsonrpc": "2.0",
-			"id":      1,
-			"method":  "initialize",
-			"params": map[string]interface{}{
-				"protocolVersion": "2024-11-05",
-				"capabilities":    map[string]interface{}{},
-				"clientInfo": map[string]interface{}{
-					"name":    "test-client",
-					"version": "1.0.0",
-				},
-			},
-		}
+	Describe("individual server endpoints", func() {
+		It("should expose individual server tools via /<namespace>/<server>/mcp", func() {
+			By("listing tools from server-a")
+			Eventually(func(g Gomega) {
+				tools := utils.FetchTools(g, toolGateway, "/namespace-a/server-a/mcp")
+				g.Expect(tools).To(Equal([]string{"echo", "get_weather"}))
+			}, 2*time.Minute, 5*time.Second).Should(Succeed(), "tools from server-a did not match")
 
-		var body []byte
-		Eventually(func(g Gomega) {
-			var statusCode int
-			var err error
-			// agentgateway service in agentgateway-system namespace handles all Gateway traffic
-			// Using port 9977 which is the agentgateway HTTP port
-			body, statusCode, err = utils.MakeServicePost("tool-gateway", "test-tool-gateway", 80,
-				"/test/echo-mcp-server/mcp", mcpRequest)
-			_, _ = fmt.Fprintf(GinkgoWriter, "MCP request: statusCode=%d err=%v body=%s\n", statusCode, err, string(body))
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(statusCode).To(Equal(200))
-		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "Failed to send MCP request to gateway")
+			By("listing tools from server-b")
+			Eventually(func(g Gomega) {
+				tools := utils.FetchTools(g, toolGateway, "/namespace-a/server-b/mcp")
+				g.Expect(tools).To(Equal([]string{"echo", "get_status"}))
+			}, 2*time.Minute, 5*time.Second).Should(Succeed(), "tools from server-b did not match")
 
-		By("verifying MCP response")
-		var responseMap map[string]interface{}
-		err := json.Unmarshal(utils.ParseSSEBody(body), &responseMap)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(responseMap["jsonrpc"]).To(Equal("2.0"))
-		Expect(responseMap["id"]).To(BeEquivalentTo(1))
-		Expect(responseMap).To(HaveKey("result"))
+			By("listing tools from server-c")
+			Eventually(func(g Gomega) {
+				tools := utils.FetchTools(g, toolGateway, "/namespace-b/server-c/mcp")
+				g.Expect(tools).To(Equal([]string{"echo", "get_info"}))
+			}, 2*time.Minute, 5*time.Second).Should(Succeed(), "tools from server-c did not match")
+		})
+	})
+
+	Describe("namespace aggregate endpoint", func() {
+		It("should aggregate all servers in a namespace via /<namespace>/mcp", func() {
+			By("listing tools from namespace-a aggregate endpoint")
+			Eventually(func(g Gomega) {
+				tools := utils.FetchTools(g, toolGateway, "/namespace-a/mcp")
+				g.Expect(tools).To(Equal([]string{
+					"namespace-a-server-a_echo",
+					"namespace-a-server-a_get_weather",
+					"namespace-a-server-b_echo",
+					"namespace-a-server-b_get_status",
+				}))
+			}, 2*time.Minute, 5*time.Second).Should(Succeed(), "namespace-a aggregate tools did not match")
+
+			By("listing tools from namespace-b aggregate endpoint")
+			Eventually(func(g Gomega) {
+				tools := utils.FetchTools(g, toolGateway, "/namespace-b/mcp")
+				g.Expect(tools).To(Equal([]string{
+					"echo",
+					"get_info",
+				}))
+			}, 2*time.Minute, 5*time.Second).Should(Succeed(), "namespace-b aggregate tools did not match")
+		})
+	})
+
+	Describe("root aggregate endpoint", func() {
+		It("should aggregate all servers via /mcp", func() {
+			By("listing tools from the root aggregate endpoint")
+			Eventually(func(g Gomega) {
+				tools := utils.FetchTools(g, toolGateway, "/mcp")
+				g.Expect(tools).To(Equal([]string{
+					"namespace-a-server-a_echo",
+					"namespace-a-server-a_get_weather",
+					"namespace-a-server-b_echo",
+					"namespace-a-server-b_get_status",
+					"namespace-b-server-c_echo",
+					"namespace-b-server-c_get_info",
+				}))
+			}, 2*time.Minute, 5*time.Second).Should(Succeed(), "root aggregate tools did not match")
+		})
 	})
 })

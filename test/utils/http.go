@@ -27,37 +27,42 @@ import (
 	"time"
 )
 
-// GetRequestWithStatus sends a GET request and returns the response body, status code, and error.
+// GetRequest sends a GET request and returns the response body, status code, and error.
 // This function does not treat non-200 status codes as errors,
 // allowing callers to explicitly check for specific status codes like 404.
-func GetRequestWithStatus(url string) ([]byte, int, error) {
+func GetRequest(url string) ([]byte, http.Header, int, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to create request: %w", err)
+		return nil, nil, 0, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	return requestWithStatus(req)
+	return doRequest(req)
 }
 
-// PostRequestWithStatus sends a POST request with a JSON payload and returns the response body, status code, and error.
-// This function does not treat non-200 status codes as errors,
-// allowing callers to explicitly check for specific status codes.
-func PostRequestWithStatus(url string, payload any) ([]byte, int, error) {
+// PostRequest sends a POST request with additional headers and returns
+// the response body, response headers, status code, and error.
+// Use this when you need to inspect or forward response headers (e.g. Mcp-Session-Id).
+func PostRequest(
+	url string,
+	payload any,
+	extraHeaders map[string]string,
+) ([]byte, http.Header, int, error) {
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to marshal payload: %w", err)
+		return nil, nil, 0, fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(payloadBytes))
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to create request: %w", err)
+		return nil, nil, 0, fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	// MCP Streamable HTTP transport requires the client to accept both JSON and SSE
-	// (agentgateway enforces this and responds in SSE format).
 	req.Header.Set("Accept", "application/json, text/event-stream")
+	for k, v := range extraHeaders {
+		req.Header.Set(k, v)
+	}
 
-	return requestWithStatus(req)
+	return doRequest(req)
 }
 
 // ParseSSEBody extracts JSON payloads from an SSE response body.
@@ -79,12 +84,12 @@ func ParseSSEBody(body []byte) []byte {
 	return []byte(jsonLines[len(jsonLines)-1])
 }
 
-// requestWithStatus executes an HTTP request and returns the response body, status code, and error.
-func requestWithStatus(req *http.Request) ([]byte, int, error) {
+// doRequest executes an HTTP request and returns the response body, response headers, status code, and error.
+func doRequest(req *http.Request) ([]byte, http.Header, int, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, 0, fmt.Errorf("HTTP request failed: %w", err)
+		return nil, nil, 0, fmt.Errorf("HTTP request failed: %w", err)
 	}
 	defer func(Body io.ReadCloser) {
 		if err := Body.Close(); err != nil {
@@ -94,8 +99,8 @@ func requestWithStatus(req *http.Request) ([]byte, int, error) {
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, resp.StatusCode, fmt.Errorf("failed to read response body: %w", err)
+		return nil, nil, resp.StatusCode, fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	return bodyBytes, resp.StatusCode, nil
+	return bodyBytes, resp.Header, resp.StatusCode, nil
 }

@@ -37,6 +37,13 @@ import (
 // RequestFunc defines a function that makes an HTTP request given a base URL (host:port)
 type RequestFunc func(baseURL string) (body []byte, statusCode int, err error)
 
+// ServiceTarget identifies a Kubernetes service to connect to.
+type ServiceTarget struct {
+	Namespace   string
+	ServiceName string
+	Port        int
+}
+
 // resolveServiceToPod resolves a service to one of its backing pods and the target port
 func resolveServiceToPod(
 	ctx context.Context, clientset *kubernetes.Clientset, namespace, serviceName string, servicePort int,
@@ -278,44 +285,18 @@ func PortForwardService(ctx context.Context, namespace, serviceName string, port
 // Non-2xx HTTP status codes are returned successfully (not treated as errors), allowing callers
 // to verify specific status codes like 404.
 func MakeServiceRequest(
-	namespace, serviceName string,
-	servicePort int,
+	target ServiceTarget,
 	requestFunc RequestFunc,
 ) (body []byte, statusCode int, err error) {
 	// Create fresh port-forward for this request
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	localPort, pfErr := PortForwardService(ctx, namespace, serviceName, servicePort)
+	localPort, pfErr := PortForwardService(ctx, target.Namespace, target.ServiceName, target.Port)
 	if pfErr != nil {
 		return nil, 0, fmt.Errorf("port-forward failed: %w", pfErr)
 	}
 
 	baseURL := fmt.Sprintf("http://localhost:%d", localPort)
 	return requestFunc(baseURL)
-}
-
-// MakeServiceGet is a convenience wrapper for GET requests to a Kubernetes service.
-func MakeServiceGet(namespace, serviceName string, servicePort int, endpoint string) ([]byte, int, error) {
-	return MakeServiceRequest(
-		namespace, serviceName, servicePort,
-		func(baseURL string) ([]byte, int, error) {
-			return GetRequestWithStatus(baseURL + endpoint)
-		},
-	)
-}
-
-// MakeServicePost is a convenience wrapper for POST requests to a Kubernetes service.
-func MakeServicePost(
-	namespace, serviceName string,
-	servicePort int,
-	endpoint string,
-	payload interface{},
-) ([]byte, int, error) {
-	return MakeServiceRequest(
-		namespace, serviceName, servicePort,
-		func(baseURL string) ([]byte, int, error) {
-			return PostRequestWithStatus(baseURL+endpoint, payload)
-		},
-	)
 }

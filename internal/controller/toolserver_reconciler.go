@@ -23,10 +23,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -84,15 +82,8 @@ func (r *ToolServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
-	// Compute unique path for this ToolServer
-	suffix := "/mcp"
-	if toolServer.Spec.TransportType == "sse" {
-		suffix = "/sse"
-	}
-	path := fmt.Sprintf("/%s/%s%s", toolServer.Namespace, toolServer.Name, suffix)
-
 	// Create or update HTTPRoute
-	if err := r.ensureHTTPRoute(ctx, &toolServer, gatewayRef, path); err != nil {
+	if err := r.ensureHTTPRoute(ctx, &toolServer, gatewayRef); err != nil {
 		log.Error(err, "Failed to ensure HTTPRoute")
 		r.Recorder.Event(&toolServer, "Warning", "RouteFailed", err.Error())
 		return ctrl.Result{}, err
@@ -109,11 +100,7 @@ func (r *ToolServerReconciler) ensureAgentgatewayBackend(
 	log := logf.FromContext(ctx)
 
 	// Create AgentgatewayBackend as unstructured since CRD types are not yet available as Go module
-	backend := &unstructured.Unstructured{}
-	backend.SetAPIVersion("agentgateway.dev/v1alpha1")
-	backend.SetKind("AgentgatewayBackend")
-	backend.SetName(toolServer.Name)
-	backend.SetNamespace(toolServer.Namespace)
+	backend := newAgentgatewayBackend(toolServer.Status.ToolGatewayRef.Name+"-"+toolServer.Name, toolServer.Namespace)
 
 	op, err := controllerutil.CreateOrPatch(ctx, r.Client, backend, func() error {
 		// Set owner reference to ToolServer for automatic cleanup
@@ -121,20 +108,8 @@ func (r *ToolServerReconciler) ensureAgentgatewayBackend(
 			return fmt.Errorf("failed to set owner reference: %w", err)
 		}
 
-		// Set the backend specification
-		if err := unstructured.SetNestedMap(backend.Object, map[string]interface{}{
-			"targets": []interface{}{
-				map[string]interface{}{
-					"name": "mcp-target",
-					"static": map[string]interface{}{
-						"host": fmt.Sprintf("%s.%s.svc.cluster.local",
-							toolServer.Name, toolServer.Namespace),
-						"port":     int64(toolServer.Spec.Port),
-						"protocol": "StreamableHTTP",
-					},
-				},
-			},
-		}, "spec", "mcp"); err != nil {
+		target := buildMCPTarget("mcp-target", toolServerHost(toolServer.Name, toolServer.Namespace), toolServer.Spec.Port)
+		if err := setMCPTargets(backend, []interface{}{target}); err != nil {
 			return fmt.Errorf("failed to set backend spec: %w", err)
 		}
 		return nil
@@ -144,7 +119,7 @@ func (r *ToolServerReconciler) ensureAgentgatewayBackend(
 		return fmt.Errorf("failed to create or update AgentgatewayBackend: %w", err)
 	}
 
-	log.Info("AgentgatewayBackend reconciled", "operation", op, "name", toolServer.Name, "namespace", toolServer.Namespace)
+	log.Info("AgentgatewayBackend reconciled", "operation", op, "name", backend.GetName(), "namespace", toolServer.Namespace)
 
 	// Record event
 	switch op {
@@ -164,14 +139,20 @@ func (r *ToolServerReconciler) ensureHTTPRoute(
 	ctx context.Context,
 	toolServer *agentruntimev1alpha1.ToolServer,
 	gatewayRef *corev1.ObjectReference,
-	path string,
 ) error {
 	log := logf.FromContext(ctx)
+
+	// Compute unique path for this ToolServer
+	suffix := "/mcp"
+	if toolServer.Spec.TransportType == "sse" {
+		suffix = "/sse"
+	}
+	path := fmt.Sprintf("/%s/%s%s", toolServer.Namespace, toolServer.Name, suffix)
 
 	// HTTPRoute in same namespace as ToolServer, owned by ToolServer
 	route := &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      toolServer.Name,
+			Name:      gatewayRef.Name + "-" + toolServer.Name,
 			Namespace: toolServer.Namespace,
 		},
 	}
@@ -183,41 +164,11 @@ func (r *ToolServerReconciler) ensureHTTPRoute(
 		}
 
 		// Set the route specification
-		pathType := gatewayv1.PathMatchPathPrefix
-		route.Spec = gatewayv1.HTTPRouteSpec{
-			CommonRouteSpec: gatewayv1.CommonRouteSpec{
-				ParentRefs: []gatewayv1.ParentReference{
-					{
-						Name:      gatewayv1.ObjectName(gatewayRef.Name),
-						Namespace: ptr.To(gatewayv1.Namespace(gatewayRef.Namespace)),
-					},
-				},
-			},
-			Rules: []gatewayv1.HTTPRouteRule{
-				{
-					BackendRefs: []gatewayv1.HTTPBackendRef{
-						{
-							BackendRef: gatewayv1.BackendRef{
-								BackendObjectReference: gatewayv1.BackendObjectReference{
-									Group:     ptr.To(gatewayv1.Group("agentgateway.dev")),
-									Kind:      ptr.To(gatewayv1.Kind("AgentgatewayBackend")),
-									Name:      gatewayv1.ObjectName(toolServer.Name),
-									Namespace: ptr.To(gatewayv1.Namespace(toolServer.Namespace)),
-								},
-							},
-						},
-					},
-					Matches: []gatewayv1.HTTPRouteMatch{
-						{
-							Path: &gatewayv1.HTTPPathMatch{
-								Type:  &pathType,
-								Value: ptr.To(path),
-							},
-						},
-					},
-				},
-			},
-		}
+		route.Spec = buildHTTPRouteSpec(
+			gatewayRef.Name, gatewayRef.Namespace,
+			gatewayRef.Name+"-"+toolServer.Name, toolServer.Namespace,
+			path,
+		)
 		return nil
 	})
 
