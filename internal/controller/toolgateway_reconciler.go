@@ -23,7 +23,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
@@ -303,11 +302,7 @@ func (r *ToolGatewayReconciler) getToolServersForGateway(ctx context.Context, to
 func (r *ToolGatewayReconciler) ensureMultiplexBackend(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway, toolServers []agentruntimev1alpha1.ToolServer, name, namespace string) error {
 	log := logf.FromContext(ctx)
 
-	backend := &unstructured.Unstructured{}
-	backend.SetAPIVersion("agentgateway.dev/v1alpha1")
-	backend.SetKind("AgentgatewayBackend")
-	backend.SetName(name)
-	backend.SetNamespace(namespace)
+	backend := newAgentgatewayBackend(name, namespace)
 
 	op, err := controllerutil.CreateOrPatch(ctx, r.Client, backend, func() error {
 		// Owner reference enables automatic cleanup when the ToolGateway is deleted,
@@ -319,24 +314,17 @@ func (r *ToolGatewayReconciler) ensureMultiplexBackend(ctx context.Context, tool
 		}
 
 		// Build targets list for all ToolServers
+		// Always include namespace in target name for uniqueness across namespaces
 		targets := make([]interface{}, 0, len(toolServers))
 		for _, ts := range toolServers {
-			// Always include namespace in target name for uniqueness across namespaces
-			targetName := fmt.Sprintf("%s-%s", ts.Namespace, ts.Name)
-			targets = append(targets, map[string]interface{}{
-				"name": targetName,
-				"static": map[string]interface{}{
-					"host":     fmt.Sprintf("%s.%s.svc.cluster.local", ts.Name, ts.Namespace),
-					"port":     int64(ts.Spec.Port),
-					"protocol": "StreamableHTTP",
-				},
-			})
+			targets = append(targets, buildMCPTarget(
+				fmt.Sprintf("%s-%s", ts.Namespace, ts.Name),
+				toolServerHost(ts.Name, ts.Namespace),
+				ts.Spec.Port,
+			))
 		}
 
-		// Set the backend specification
-		if err := unstructured.SetNestedMap(backend.Object, map[string]interface{}{
-			"targets": targets,
-		}, "spec", "mcp"); err != nil {
+		if err := setMCPTargets(backend, targets); err != nil {
 			return fmt.Errorf("failed to set backend spec: %w", err)
 		}
 
@@ -384,43 +372,7 @@ func (r *ToolGatewayReconciler) ensureMultiplexRoute(ctx context.Context, toolGa
 			}
 		}
 
-		pathType := gatewayv1.PathMatchPathPrefix
-
-		route.Spec = gatewayv1.HTTPRouteSpec{
-			CommonRouteSpec: gatewayv1.CommonRouteSpec{
-				ParentRefs: []gatewayv1.ParentReference{
-					{
-						Name:      gatewayv1.ObjectName(toolGateway.Name),
-						Namespace: ptr.To(gatewayv1.Namespace(toolGateway.Namespace)),
-					},
-				},
-			},
-			Rules: []gatewayv1.HTTPRouteRule{
-				{
-					BackendRefs: []gatewayv1.HTTPBackendRef{
-						{
-							BackendRef: gatewayv1.BackendRef{
-								BackendObjectReference: gatewayv1.BackendObjectReference{
-									Group:     ptr.To(gatewayv1.Group("agentgateway.dev")),
-									Kind:      ptr.To(gatewayv1.Kind("AgentgatewayBackend")),
-									Name:      gatewayv1.ObjectName(name),
-									Namespace: ptr.To(gatewayv1.Namespace(namespace)),
-								},
-							},
-						},
-					},
-					Matches: []gatewayv1.HTTPRouteMatch{
-						{
-							Path: &gatewayv1.HTTPPathMatch{
-								Type:  &pathType,
-								Value: ptr.To(path),
-							},
-						},
-					},
-				},
-			},
-		}
-
+		route.Spec = buildHTTPRouteSpec(toolGateway.Name, toolGateway.Namespace, name, namespace, path)
 		return nil
 	})
 
@@ -457,7 +409,7 @@ func (r *ToolGatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 }
 
 // findToolGatewayForToolServer maps a ToolServer to its associated ToolGateway for reconciliation
-func (r *ToolGatewayReconciler) findToolGatewayForToolServer(ctx context.Context, obj client.Object) []ctrl.Request {
+func (r *ToolGatewayReconciler) findToolGatewayForToolServer(_ context.Context, obj client.Object) []ctrl.Request {
 	toolServer, ok := obj.(*agentruntimev1alpha1.ToolServer)
 	if !ok {
 		return nil
