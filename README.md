@@ -19,7 +19,7 @@ The Tool Gateway agentgateway Operator is a Kubernetes operator that manages `To
 
 Before working with this project, ensure you have the following tools installed on your system:
 
-* **Go**: version 1.24.0 or higher
+* **Go**: version 1.26.0 or higher
 * **Docker**: version 20.10+ (or a compatible alternative like Podman)
 * **kubectl**: The Kubernetes command-line tool
 * **kind**: For running Kubernetes locally in Docker
