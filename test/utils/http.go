@@ -60,6 +60,44 @@ func PostRequestWithStatus(url string, payload any) ([]byte, int, error) {
 	return requestWithStatus(req)
 }
 
+// PostRequestWithExtraHeaders sends a POST request with additional headers and returns
+// the response body, response headers, status code, and error.
+// Use this when you need to inspect or forward response headers (e.g. Mcp-Session-Id).
+func PostRequestWithExtraHeaders(url string, payload any, extraHeaders map[string]string) ([]byte, http.Header, int, error) {
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, nil, 0, fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(payloadBytes))
+	if err != nil {
+		return nil, nil, 0, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	for k, v := range extraHeaders {
+		req.Header.Set(k, v)
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, nil, 0, fmt.Errorf("HTTP request failed: %w", err)
+	}
+	defer func(Body io.ReadCloser) {
+		if err := Body.Close(); err != nil {
+			fmt.Printf("Failed to close response body: %v\n", err)
+		}
+	}(resp.Body)
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, resp.Header, resp.StatusCode, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	return bodyBytes, resp.Header, resp.StatusCode, nil
+}
+
 // ParseSSEBody extracts JSON payloads from an SSE response body.
 // It returns the concatenated JSON from all "data: ..." lines, or the original body
 // if no SSE data lines are found (plain JSON response).

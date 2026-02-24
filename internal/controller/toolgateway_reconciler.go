@@ -249,21 +249,27 @@ func (r *ToolGatewayReconciler) ensureMultiplexRoutes(ctx context.Context, toolG
 		return nil
 	}
 
-	// Create namespace-level multiplex backend and route (/<namespace>/mcp)
-	if err := r.ensureNamespaceMultiplexBackend(ctx, toolGateway, toolServers); err != nil {
-		return fmt.Errorf("failed to ensure namespace multiplex backend: %w", err)
+	// Group ToolServers by their namespace and create one backend+route per namespace
+	byNamespace := map[string][]agentruntimev1alpha1.ToolServer{}
+	for _, ts := range toolServers {
+		byNamespace[ts.Namespace] = append(byNamespace[ts.Namespace], ts)
 	}
-
-	if err := r.ensureNamespaceMultiplexRoute(ctx, toolGateway); err != nil {
-		return fmt.Errorf("failed to ensure namespace multiplex route: %w", err)
+	for ns, servers := range byNamespace {
+		suffix := "ns-" + ns
+		if err := r.ensureMultiplexBackend(ctx, toolGateway, servers, suffix); err != nil {
+			return fmt.Errorf("failed to ensure namespace multiplex backend for %s: %w", ns, err)
+		}
+		if err := r.ensureMultiplexRoute(ctx, toolGateway, suffix, fmt.Sprintf("/%s/mcp", ns)); err != nil {
+			return fmt.Errorf("failed to ensure namespace multiplex route for %s: %w", ns, err)
+		}
 	}
 
 	// Create root-level multiplex backend and route (/mcp)
-	if err := r.ensureRootMultiplexBackend(ctx, toolGateway, toolServers); err != nil {
+	if err := r.ensureMultiplexBackend(ctx, toolGateway, toolServers, "root"); err != nil {
 		return fmt.Errorf("failed to ensure root multiplex backend: %w", err)
 	}
 
-	if err := r.ensureRootMultiplexRoute(ctx, toolGateway); err != nil {
+	if err := r.ensureMultiplexRoute(ctx, toolGateway, "root", "/mcp"); err != nil {
 		return fmt.Errorf("failed to ensure root multiplex route: %w", err)
 	}
 
@@ -288,41 +294,6 @@ func (r *ToolGatewayReconciler) getToolServersForGateway(ctx context.Context, to
 	}
 
 	return result, nil
-}
-
-// ensureNamespaceMultiplexBackend creates a multiplex backend for all ToolServers in the gateway's namespace
-func (r *ToolGatewayReconciler) ensureNamespaceMultiplexBackend(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway, toolServers []agentruntimev1alpha1.ToolServer) error {
-	// Filter ToolServers to only those in the gateway's namespace
-	var namespacedServers []agentruntimev1alpha1.ToolServer
-	for _, ts := range toolServers {
-		if ts.Namespace == toolGateway.Namespace {
-			namespacedServers = append(namespacedServers, ts)
-		}
-	}
-
-	if len(namespacedServers) == 0 {
-		log := logf.FromContext(ctx)
-		log.Info("No ToolServers in gateway namespace, skipping namespace multiplex backend")
-		return nil
-	}
-
-	return r.ensureMultiplexBackend(ctx, toolGateway, namespacedServers, "ns")
-}
-
-// ensureNamespaceMultiplexRoute creates HTTPRoute for /<namespace>/mcp
-func (r *ToolGatewayReconciler) ensureNamespaceMultiplexRoute(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway) error {
-	path := fmt.Sprintf("/%s/mcp", toolGateway.Namespace)
-	return r.ensureMultiplexRoute(ctx, toolGateway, "ns", path)
-}
-
-// ensureRootMultiplexBackend creates a multiplex backend for all ToolServers
-func (r *ToolGatewayReconciler) ensureRootMultiplexBackend(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway, toolServers []agentruntimev1alpha1.ToolServer) error {
-	return r.ensureMultiplexBackend(ctx, toolGateway, toolServers, "root")
-}
-
-// ensureRootMultiplexRoute creates HTTPRoute for /mcp
-func (r *ToolGatewayReconciler) ensureRootMultiplexRoute(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway) error {
-	return r.ensureMultiplexRoute(ctx, toolGateway, "root", "/mcp")
 }
 
 // ensureMultiplexBackend creates a multiplex backend for the given ToolServers
