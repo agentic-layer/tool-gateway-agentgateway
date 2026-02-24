@@ -50,21 +50,27 @@ var _ = Describe("ToolGateway Multiplex MCP", Ordered, func() {
 
 		By("waiting for ToolServers to be ready")
 		Eventually(func(g Gomega) {
-			cmd := exec.Command("kubectl", "get", "pods", "-n", "namespace-a", "-l", "app.kubernetes.io/name=server-a", "-o", "jsonpath={.items[0].status.phase}")
+			cmd := exec.Command("kubectl", "get", "pods", "-n", "namespace-a",
+				"-l", "app.kubernetes.io/name=server-a",
+				"-o", "jsonpath={.items[0].status.phase}")
 			output, err := cmd.CombinedOutput()
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(string(output)).To(Equal("Running"))
 		}, 2*time.Minute, 5*time.Second).Should(Succeed())
 
 		Eventually(func(g Gomega) {
-			cmd := exec.Command("kubectl", "get", "pods", "-n", "namespace-a", "-l", "app.kubernetes.io/name=server-b", "-o", "jsonpath={.items[0].status.phase}")
+			cmd := exec.Command("kubectl", "get", "pods", "-n", "namespace-a",
+				"-l", "app.kubernetes.io/name=server-b",
+				"-o", "jsonpath={.items[0].status.phase}")
 			output, err := cmd.CombinedOutput()
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(string(output)).To(Equal("Running"))
 		}, 2*time.Minute, 5*time.Second).Should(Succeed())
 
 		Eventually(func(g Gomega) {
-			cmd := exec.Command("kubectl", "get", "pods", "-n", "namespace-b", "-l", "app.kubernetes.io/name=server-c", "-o", "jsonpath={.items[0].status.phase}")
+			cmd := exec.Command("kubectl", "get", "pods", "-n", "namespace-b",
+				"-l", "app.kubernetes.io/name=server-c",
+				"-o", "jsonpath={.items[0].status.phase}")
 			output, err := cmd.CombinedOutput()
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(string(output)).To(Equal("Running"))
@@ -89,8 +95,11 @@ var _ = Describe("ToolGateway Multiplex MCP", Ordered, func() {
 		var statusCode int
 		var err error
 		Eventually(func(g Gomega) {
-			body, statusCode, err = utils.MakeServicePost("tool-gateway", "test-tool-gateway", 80, path, mcpRequest)
-			_, _ = fmt.Fprintf(GinkgoWriter, "MCP tools/list request to %s: statusCode=%d err=%v body=%s\n", path, statusCode, err, string(body))
+			body, statusCode, err = utils.MakeServicePost(
+				"tool-gateway", "test-tool-gateway", 80, path, mcpRequest)
+			_, _ = fmt.Fprintf(GinkgoWriter,
+				"MCP tools/list request to %s: statusCode=%d err=%v body=%s\n",
+				path, statusCode, err, string(body))
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(statusCode).To(Equal(200))
 		}, 2*time.Minute, 5*time.Second).Should(Succeed(), fmt.Sprintf("Failed to send MCP tools/list to %s", path))
