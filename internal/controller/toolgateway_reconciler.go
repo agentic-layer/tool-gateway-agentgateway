@@ -292,8 +292,6 @@ func (r *ToolGatewayReconciler) getToolServersForGateway(ctx context.Context, to
 
 // ensureNamespaceMultiplexBackend creates a multiplex backend for all ToolServers in the gateway's namespace
 func (r *ToolGatewayReconciler) ensureNamespaceMultiplexBackend(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway, toolServers []agentruntimev1alpha1.ToolServer) error {
-	log := logf.FromContext(ctx)
-
 	// Filter ToolServers to only those in the gateway's namespace
 	var namespacedServers []agentruntimev1alpha1.ToolServer
 	for _, ts := range toolServers {
@@ -303,14 +301,38 @@ func (r *ToolGatewayReconciler) ensureNamespaceMultiplexBackend(ctx context.Cont
 	}
 
 	if len(namespacedServers) == 0 {
+		log := logf.FromContext(ctx)
 		log.Info("No ToolServers in gateway namespace, skipping namespace multiplex backend")
 		return nil
 	}
 
+	return r.ensureMultiplexBackend(ctx, toolGateway, namespacedServers, "ns", false)
+}
+
+// ensureNamespaceMultiplexRoute creates HTTPRoute for /<namespace>/mcp
+func (r *ToolGatewayReconciler) ensureNamespaceMultiplexRoute(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway) error {
+	path := fmt.Sprintf("/%s/mcp", toolGateway.Namespace)
+	return r.ensureMultiplexRoute(ctx, toolGateway, "ns", path)
+}
+
+// ensureRootMultiplexBackend creates a multiplex backend for all ToolServers
+func (r *ToolGatewayReconciler) ensureRootMultiplexBackend(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway, toolServers []agentruntimev1alpha1.ToolServer) error {
+	return r.ensureMultiplexBackend(ctx, toolGateway, toolServers, "root", true)
+}
+
+// ensureRootMultiplexRoute creates HTTPRoute for /mcp
+func (r *ToolGatewayReconciler) ensureRootMultiplexRoute(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway) error {
+	return r.ensureMultiplexRoute(ctx, toolGateway, "root", "/mcp")
+}
+
+// ensureMultiplexBackend creates a multiplex backend for the given ToolServers
+func (r *ToolGatewayReconciler) ensureMultiplexBackend(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway, toolServers []agentruntimev1alpha1.ToolServer, suffix string, includeNamespaceInTargetName bool) error {
+	log := logf.FromContext(ctx)
+
 	backend := &unstructured.Unstructured{}
 	backend.SetAPIVersion("agentgateway.dev/v1alpha1")
 	backend.SetKind("AgentgatewayBackend")
-	backend.SetName(fmt.Sprintf("%s-multiplex-ns", toolGateway.Name))
+	backend.SetName(fmt.Sprintf("%s-multiplex-%s", toolGateway.Name, suffix))
 	backend.SetNamespace(toolGateway.Namespace)
 
 	op, err := controllerutil.CreateOrPatch(ctx, r.Client, backend, func() error {
@@ -319,11 +341,15 @@ func (r *ToolGatewayReconciler) ensureNamespaceMultiplexBackend(ctx context.Cont
 			return fmt.Errorf("failed to set owner reference: %w", err)
 		}
 
-		// Build targets list for all ToolServers in namespace
-		targets := make([]interface{}, 0, len(namespacedServers))
-		for _, ts := range namespacedServers {
+		// Build targets list for all ToolServers
+		targets := make([]interface{}, 0, len(toolServers))
+		for _, ts := range toolServers {
+			targetName := ts.Name
+			if includeNamespaceInTargetName {
+				targetName = fmt.Sprintf("%s-%s", ts.Namespace, ts.Name)
+			}
 			targets = append(targets, map[string]interface{}{
-				"name": ts.Name,
+				"name": targetName,
 				"static": map[string]interface{}{
 					"host":     fmt.Sprintf("%s.%s.svc.cluster.local", ts.Name, ts.Namespace),
 					"port":     int64(ts.Spec.Port),
@@ -343,30 +369,30 @@ func (r *ToolGatewayReconciler) ensureNamespaceMultiplexBackend(ctx context.Cont
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to create or update namespace multiplex backend: %w", err)
+		return fmt.Errorf("failed to create or update multiplex backend: %w", err)
 	}
 
-	log.Info("Namespace multiplex backend reconciled", "operation", op, "name", backend.GetName())
+	log.Info("Multiplex backend reconciled", "operation", op, "name", backend.GetName(), "suffix", suffix)
 
 	switch op {
 	case controllerutil.OperationResultCreated:
 		r.Recorder.Event(toolGateway, "Normal", "MultiplexBackendCreated",
-			fmt.Sprintf("Created namespace multiplex backend %s", backend.GetName()))
+			fmt.Sprintf("Created multiplex backend %s", backend.GetName()))
 	case controllerutil.OperationResultUpdated:
 		r.Recorder.Event(toolGateway, "Normal", "MultiplexBackendUpdated",
-			fmt.Sprintf("Updated namespace multiplex backend %s", backend.GetName()))
+			fmt.Sprintf("Updated multiplex backend %s", backend.GetName()))
 	}
 
 	return nil
 }
 
-// ensureNamespaceMultiplexRoute creates HTTPRoute for /<namespace>/mcp
-func (r *ToolGatewayReconciler) ensureNamespaceMultiplexRoute(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway) error {
+// ensureMultiplexRoute creates HTTPRoute for the given path
+func (r *ToolGatewayReconciler) ensureMultiplexRoute(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway, suffix string, path string) error {
 	log := logf.FromContext(ctx)
 
 	route := &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("%s-multiplex-ns", toolGateway.Name),
+			Name:      fmt.Sprintf("%s-multiplex-%s", toolGateway.Name, suffix),
 			Namespace: toolGateway.Namespace,
 		},
 	}
@@ -378,7 +404,6 @@ func (r *ToolGatewayReconciler) ensureNamespaceMultiplexRoute(ctx context.Contex
 		}
 
 		pathType := gatewayv1.PathMatchPathPrefix
-		path := fmt.Sprintf("/%s/mcp", toolGateway.Namespace)
 
 		route.Spec = gatewayv1.HTTPRouteSpec{
 			CommonRouteSpec: gatewayv1.CommonRouteSpec{
@@ -397,7 +422,7 @@ func (r *ToolGatewayReconciler) ensureNamespaceMultiplexRoute(ctx context.Contex
 								BackendObjectReference: gatewayv1.BackendObjectReference{
 									Group:     ptr.To(gatewayv1.Group("agentgateway.dev")),
 									Kind:      ptr.To(gatewayv1.Kind("AgentgatewayBackend")),
-									Name:      gatewayv1.ObjectName(fmt.Sprintf("%s-multiplex-ns", toolGateway.Name)),
+									Name:      gatewayv1.ObjectName(fmt.Sprintf("%s-multiplex-%s", toolGateway.Name, suffix)),
 									Namespace: ptr.To(gatewayv1.Namespace(toolGateway.Namespace)),
 								},
 							},
@@ -419,150 +444,18 @@ func (r *ToolGatewayReconciler) ensureNamespaceMultiplexRoute(ctx context.Contex
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to create or update namespace multiplex route: %w", err)
+		return fmt.Errorf("failed to create or update multiplex route: %w", err)
 	}
 
-	log.Info("Namespace multiplex route reconciled", "operation", op, "name", route.Name)
+	log.Info("Multiplex route reconciled", "operation", op, "name", route.Name, "path", path)
 
 	switch op {
 	case controllerutil.OperationResultCreated:
 		r.Recorder.Event(toolGateway, "Normal", "MultiplexRouteCreated",
-			fmt.Sprintf("Created namespace multiplex route %s", route.Name))
+			fmt.Sprintf("Created multiplex route %s", route.Name))
 	case controllerutil.OperationResultUpdated:
 		r.Recorder.Event(toolGateway, "Normal", "MultiplexRouteUpdated",
-			fmt.Sprintf("Updated namespace multiplex route %s", route.Name))
-	}
-
-	return nil
-}
-
-// ensureRootMultiplexBackend creates a multiplex backend for all ToolServers
-func (r *ToolGatewayReconciler) ensureRootMultiplexBackend(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway, toolServers []agentruntimev1alpha1.ToolServer) error {
-	log := logf.FromContext(ctx)
-
-	backend := &unstructured.Unstructured{}
-	backend.SetAPIVersion("agentgateway.dev/v1alpha1")
-	backend.SetKind("AgentgatewayBackend")
-	backend.SetName(fmt.Sprintf("%s-multiplex-root", toolGateway.Name))
-	backend.SetNamespace(toolGateway.Namespace)
-
-	op, err := controllerutil.CreateOrPatch(ctx, r.Client, backend, func() error {
-		// Set owner reference to ToolGateway for automatic cleanup
-		if err := controllerutil.SetControllerReference(toolGateway, backend, r.Scheme); err != nil {
-			return fmt.Errorf("failed to set owner reference: %w", err)
-		}
-
-		// Build targets list for all ToolServers
-		targets := make([]interface{}, 0, len(toolServers))
-		for _, ts := range toolServers {
-			targets = append(targets, map[string]interface{}{
-				"name": fmt.Sprintf("%s-%s", ts.Namespace, ts.Name),
-				"static": map[string]interface{}{
-					"host":     fmt.Sprintf("%s.%s.svc.cluster.local", ts.Name, ts.Namespace),
-					"port":     int64(ts.Spec.Port),
-					"protocol": "StreamableHTTP",
-				},
-			})
-		}
-
-		// Set the backend specification
-		if err := unstructured.SetNestedMap(backend.Object, map[string]interface{}{
-			"targets": targets,
-		}, "spec", "mcp"); err != nil {
-			return fmt.Errorf("failed to set backend spec: %w", err)
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		return fmt.Errorf("failed to create or update root multiplex backend: %w", err)
-	}
-
-	log.Info("Root multiplex backend reconciled", "operation", op, "name", backend.GetName())
-
-	switch op {
-	case controllerutil.OperationResultCreated:
-		r.Recorder.Event(toolGateway, "Normal", "MultiplexBackendCreated",
-			fmt.Sprintf("Created root multiplex backend %s", backend.GetName()))
-	case controllerutil.OperationResultUpdated:
-		r.Recorder.Event(toolGateway, "Normal", "MultiplexBackendUpdated",
-			fmt.Sprintf("Updated root multiplex backend %s", backend.GetName()))
-	}
-
-	return nil
-}
-
-// ensureRootMultiplexRoute creates HTTPRoute for /mcp
-func (r *ToolGatewayReconciler) ensureRootMultiplexRoute(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway) error {
-	log := logf.FromContext(ctx)
-
-	route := &gatewayv1.HTTPRoute{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("%s-multiplex-root", toolGateway.Name),
-			Namespace: toolGateway.Namespace,
-		},
-	}
-
-	op, err := controllerutil.CreateOrPatch(ctx, r.Client, route, func() error {
-		// Set owner reference to ToolGateway for automatic cleanup
-		if err := controllerutil.SetControllerReference(toolGateway, route, r.Scheme); err != nil {
-			return err
-		}
-
-		pathType := gatewayv1.PathMatchPathPrefix
-
-		route.Spec = gatewayv1.HTTPRouteSpec{
-			CommonRouteSpec: gatewayv1.CommonRouteSpec{
-				ParentRefs: []gatewayv1.ParentReference{
-					{
-						Name:      gatewayv1.ObjectName(toolGateway.Name),
-						Namespace: ptr.To(gatewayv1.Namespace(toolGateway.Namespace)),
-					},
-				},
-			},
-			Rules: []gatewayv1.HTTPRouteRule{
-				{
-					BackendRefs: []gatewayv1.HTTPBackendRef{
-						{
-							BackendRef: gatewayv1.BackendRef{
-								BackendObjectReference: gatewayv1.BackendObjectReference{
-									Group:     ptr.To(gatewayv1.Group("agentgateway.dev")),
-									Kind:      ptr.To(gatewayv1.Kind("AgentgatewayBackend")),
-									Name:      gatewayv1.ObjectName(fmt.Sprintf("%s-multiplex-root", toolGateway.Name)),
-									Namespace: ptr.To(gatewayv1.Namespace(toolGateway.Namespace)),
-								},
-							},
-						},
-					},
-					Matches: []gatewayv1.HTTPRouteMatch{
-						{
-							Path: &gatewayv1.HTTPPathMatch{
-								Type:  &pathType,
-								Value: ptr.To("/mcp"),
-							},
-						},
-					},
-				},
-			},
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		return fmt.Errorf("failed to create or update root multiplex route: %w", err)
-	}
-
-	log.Info("Root multiplex route reconciled", "operation", op, "name", route.Name)
-
-	switch op {
-	case controllerutil.OperationResultCreated:
-		r.Recorder.Event(toolGateway, "Normal", "MultiplexRouteCreated",
-			fmt.Sprintf("Created root multiplex route %s", route.Name))
-	case controllerutil.OperationResultUpdated:
-		r.Recorder.Event(toolGateway, "Normal", "MultiplexRouteUpdated",
-			fmt.Sprintf("Updated root multiplex route %s", route.Name))
+			fmt.Sprintf("Updated multiplex route %s", route.Name))
 	}
 
 	return nil
