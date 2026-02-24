@@ -17,6 +17,7 @@ limitations under the License.
 package e2e
 
 import (
+	"context"
 	"os/exec"
 	"time"
 
@@ -40,6 +41,11 @@ var _ = Describe("ToolGateway", func() {
 		By("applying ToolGateway with ToolServer sample")
 		_, err := utils.Run(exec.Command("kubectl", "apply", "-f", toolGatewaySampleFile))
 		Expect(err).NotTo(HaveOccurred(), "Failed to apply samples")
+
+		By("waiting for gateway service to have running pods")
+		Eventually(func() error {
+			return utils.WaitForServiceReady(context.Background(), toolGateway)
+		}, 3*time.Minute, 5*time.Second).Should(Succeed(), "gateway service did not become ready")
 	})
 
 	AfterEach(func() {

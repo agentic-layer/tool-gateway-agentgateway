@@ -280,6 +280,28 @@ func PortForwardService(ctx context.Context, namespace, serviceName string, port
 	return PortForwardPod(ctx, namespace, pod.Name, targetPort)
 }
 
+// WaitForServiceReady waits until the service has at least one running pod.
+func WaitForServiceReady(ctx context.Context, target ServiceTarget) error {
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+		configOverrides := &clientcmd.ConfigOverrides{}
+		kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
+		config, err = kubeConfig.ClientConfig()
+		if err != nil {
+			return fmt.Errorf("failed to get kubernetes config: %w", err)
+		}
+	}
+
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return fmt.Errorf("failed to create clientset: %w", err)
+	}
+
+	_, _, err = resolveServiceToPod(ctx, clientset, target.Namespace, target.ServiceName, target.Port)
+	return err
+}
+
 // MakeServiceRequest establishes a port-forward to the service, makes an HTTP request, and cleans up.
 // The requestFunc receives the base URL (e.g., "http://localhost:12345") and performs the actual request.
 // Non-2xx HTTP status codes are returned successfully (not treated as errors), allowing callers
