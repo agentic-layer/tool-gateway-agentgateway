@@ -1,0 +1,24 @@
+{
+  "extends": [
+    "github>agentic-layer/renovate-config"
+  ],
+  "packageRules": [
+    {
+      "matchPackageNames": ["example.com/agent-runtime-operator"],
+      "enabled": false
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^internal/controller/agent_controller\\.go$/"
+      ],
+      "matchStrings": [
+        "defaultTemplateImageAdk\\s*=\\s*\"(?<depName>ghcr\\.io/agentic-layer/[^:]+):(?<currentValue>[^\"]+)\""
+      ],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "semver"
+    }
+  ]
+}
