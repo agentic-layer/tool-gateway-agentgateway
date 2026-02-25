@@ -105,6 +105,38 @@ func extractOTELEnvVars(envVars []corev1.EnvVar) (otelConfig, []corev1.EnvVar) {
 	return config, filtered
 }
 
+// AgentgatewayRawConfig represents the agentgateway raw configuration structure.
+// Reference: https://raw.githubusercontent.com/agentgateway/agentgateway/refs/heads/main/schema/config.json
+type AgentgatewayRawConfig struct {
+	Tracing *AgentgatewayTracing `json:"tracing,omitempty"`
+}
+
+// AgentgatewayTracing represents the tracing configuration for agentgateway.
+// Reference: https://raw.githubusercontent.com/agentgateway/agentgateway/refs/heads/main/schema/config.json ($defs.RawTracing)
+type AgentgatewayTracing struct {
+	// OtlpEndpoint is required. The OTLP exporter endpoint.
+	OtlpEndpoint string `json:"otlpEndpoint"`
+
+	// OtlpProtocol is the protocol to use for OTLP export. Must be "grpc" or "http". Default is "grpc".
+	OtlpProtocol string `json:"otlpProtocol,omitempty"`
+
+	// Headers are additional headers to send with OTLP requests.
+	Headers map[string]string `json:"headers,omitempty"`
+
+	// Path is the OTLP path. Default is /v1/traces
+	Path string `json:"path,omitempty"`
+
+	// RandomSampling determines the amount of random sampling.
+	// Random sampling will initiate a new trace span if the incoming request does not have a trace already.
+	// This should be a float between 0.0-1.0 (0-100%) or true/false. Defaults to 'false'.
+	RandomSampling interface{} `json:"randomSampling,omitempty"`
+
+	// ClientSampling determines the amount of client sampling.
+	// Client sampling determines whether to initiate a new trace span if the incoming request does have a trace already.
+	// This should be a float between 0.0-1.0 (0-100%) or true/false. Defaults to 'true'.
+	ClientSampling interface{} `json:"clientSampling,omitempty"`
+}
+
 // buildTelemetryConfig builds the agentgateway telemetry configuration from OTEL env vars
 // Returns nil if no OTEL configuration is present
 func buildTelemetryConfig(config otelConfig) map[string]interface{} {
@@ -118,18 +150,19 @@ func buildTelemetryConfig(config otelConfig) map[string]interface{} {
 		return nil
 	}
 
-	telemetry := make(map[string]interface{})
-
-	// Build tracing config
-	tracing := make(map[string]interface{})
-
 	// Determine the endpoint for tracing (signal-specific overrides general)
 	endpoint := config.tracesEndpoint
 	if endpoint == "" {
 		endpoint = config.endpoint
 	}
-	if endpoint != "" {
-		tracing["otlpEndpoint"] = endpoint
+	if endpoint == "" {
+		// No endpoint configured, return nil
+		return nil
+	}
+
+	// Build tracing config using the struct
+	tracing := &AgentgatewayTracing{
+		OtlpEndpoint: endpoint,
 	}
 
 	// Determine the protocol for tracing (signal-specific overrides general)
@@ -140,45 +173,53 @@ func buildTelemetryConfig(config otelConfig) map[string]interface{} {
 	if protocol != "" {
 		// Normalize protocol value: "grpc/protobuf" or "http/protobuf" -> "grpc" or "http"
 		if strings.HasPrefix(protocol, "grpc") {
-			tracing["otlpProtocol"] = "grpc"
+			tracing.OtlpProtocol = "grpc"
 		} else if strings.HasPrefix(protocol, "http") {
-			tracing["otlpProtocol"] = "http"
+			tracing.OtlpProtocol = "http"
 		} else {
-			tracing["otlpProtocol"] = protocol
+			tracing.OtlpProtocol = protocol
 		}
 	}
 
 	// Determine the headers for tracing (signal-specific overrides general)
-	headers := config.tracesHeaders
-	if headers == "" {
-		headers = config.headers
+	headersStr := config.tracesHeaders
+	if headersStr == "" {
+		headersStr = config.headers
 	}
-	if headers != "" {
-		// Parse headers from OTEL format (comma-separated key=value pairs or JSON)
-		// Try JSON first
-		var headersMap map[string]interface{}
-		if err := json.Unmarshal([]byte(headers), &headersMap); err == nil {
-			tracing["headers"] = headersMap
-		} else {
-			// Parse as comma-separated key=value pairs
-			headersMap = parseHeadersString(headers)
-			if len(headersMap) > 0 {
-				tracing["headers"] = headersMap
-			}
-		}
+	if headersStr != "" {
+		tracing.Headers = parseHeaders(headersStr)
 	}
 
-	if len(tracing) > 0 {
-		telemetry["tracing"] = tracing
+	// Convert to map for unstructured usage
+	rawConfig := &AgentgatewayRawConfig{
+		Tracing: tracing,
 	}
 
-	return telemetry
+	// Convert struct to map[string]interface{}
+	data, err := json.Marshal(rawConfig)
+	if err != nil {
+		return nil
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil
+	}
+
+	return result
 }
 
-// parseHeadersString parses OTEL headers from comma-separated key=value format
+// parseHeaders parses OTEL headers from comma-separated key=value format or JSON
 // Example: "key1=value1,key2=value2" -> {"key1": "value1", "key2": "value2"}
-func parseHeadersString(headers string) map[string]interface{} {
-	result := make(map[string]interface{})
+func parseHeaders(headers string) map[string]string {
+	// Try JSON first
+	var headersMap map[string]string
+	if err := json.Unmarshal([]byte(headers), &headersMap); err == nil {
+		return headersMap
+	}
+
+	// Parse as comma-separated key=value pairs
+	result := make(map[string]string)
 	pairs := strings.Split(headers, ",")
 	for _, pair := range pairs {
 		kv := strings.SplitN(strings.TrimSpace(pair), "=", 2)

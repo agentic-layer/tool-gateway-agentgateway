@@ -255,28 +255,28 @@ func TestBuildTelemetryConfig(t *testing.T) {
 	}
 }
 
-func TestParseHeadersString(t *testing.T) {
+func TestParseHeaders(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    string
-		expected map[string]interface{}
+		expected map[string]string
 	}{
 		{
 			name:     "empty string",
 			input:    "",
-			expected: map[string]interface{}{},
+			expected: map[string]string{},
 		},
 		{
 			name:  "single header",
 			input: "key=value",
-			expected: map[string]interface{}{
+			expected: map[string]string{
 				"key": "value",
 			},
 		},
 		{
 			name:  "multiple headers",
 			input: "key1=value1,key2=value2",
-			expected: map[string]interface{}{
+			expected: map[string]string{
 				"key1": "value1",
 				"key2": "value2",
 			},
@@ -284,7 +284,7 @@ func TestParseHeadersString(t *testing.T) {
 		{
 			name:  "headers with spaces",
 			input: " key1 = value1 , key2 = value2 ",
-			expected: map[string]interface{}{
+			expected: map[string]string{
 				"key1": "value1",
 				"key2": "value2",
 			},
@@ -292,28 +292,36 @@ func TestParseHeadersString(t *testing.T) {
 		{
 			name:  "header with value containing equals sign",
 			input: "auth=Bearer token=abc123",
-			expected: map[string]interface{}{
+			expected: map[string]string{
 				"auth": "Bearer token=abc123",
 			},
 		},
 		{
 			name:     "invalid header (no equals sign)",
 			input:    "invalid",
-			expected: map[string]interface{}{},
+			expected: map[string]string{},
 		},
 		{
 			name:  "mixed valid and invalid headers",
 			input: "valid=value,invalid,another=value2",
-			expected: map[string]interface{}{
+			expected: map[string]string{
 				"valid":   "value",
 				"another": "value2",
+			},
+		},
+		{
+			name:  "JSON format",
+			input: `{"api-key":"secret123","environment":"production"}`,
+			expected: map[string]string{
+				"api-key":     "secret123",
+				"environment": "production",
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := parseHeadersString(tt.input)
+			result := parseHeaders(tt.input)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
