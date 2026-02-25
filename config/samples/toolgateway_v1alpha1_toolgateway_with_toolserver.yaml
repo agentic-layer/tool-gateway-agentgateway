@@ -35,6 +35,16 @@ metadata:
 spec:
   controller: runtime.agentic-layer.ai/tool-gateway-agentgateway-controller
 
+# ConfigMap referenced by the ToolGateway envFrom
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: test-gateway-config
+  namespace: tool-gateway
+data:
+  SOME_CONFIG_VAR: "from-configmap"
+
 # ToolGateway - creates a Gateway for routing to ToolServers
 ---
 apiVersion: runtime.agentic-layer.ai/v1alpha1
@@ -44,6 +54,12 @@ metadata:
   namespace: tool-gateway
 spec:
   toolGatewayClassName: agentgateway
+  env:
+    - name: TEST_GATEWAY_ENV_VAR
+      value: "hello-from-toolgateway"
+  envFrom:
+    - configMapRef:
+        name: test-gateway-config
 
 # ToolServer 1: server-a in namespace-a with custom tool "get_weather"
 ---
