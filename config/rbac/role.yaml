@@ -15,6 +15,7 @@ rules:
   - agentgateway.dev
   resources:
   - agentgatewaybackends
+  - agentgatewayparameters
   verbs:
   - create
   - delete

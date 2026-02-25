@@ -20,8 +20,11 @@ import (
 	"fmt"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	agentruntimev1alpha1 "github.com/agentic-layer/agent-runtime-operator/api/v1alpha1"
 )
 
 // newAgentgatewayBackend creates a new unstructured AgentgatewayBackend resource.
@@ -96,4 +99,67 @@ func buildHTTPRouteSpec(gatewayName, gatewayNamespace, backendName, backendNames
 // toolServerHost returns the cluster-local DNS name for a ToolServer.
 func toolServerHost(name, namespace string) string {
 	return fmt.Sprintf("%s.%s.svc.cluster.local", name, namespace)
+}
+
+// newAgentgatewayParameters creates a new unstructured AgentgatewayParameters resource.
+func newAgentgatewayParameters(name, namespace string) *unstructured.Unstructured {
+	params := &unstructured.Unstructured{}
+	params.SetAPIVersion("agentgateway.dev/v1alpha1")
+	params.SetKind("AgentgatewayParameters")
+	params.SetName(name)
+	params.SetNamespace(namespace)
+	return params
+}
+
+// setAgentgatewayParametersSpec writes spec.env and spec.deployment.spec (for envFrom)
+// on the AgentgatewayParameters from the given ToolGatewaySpec.
+//
+// spec.env maps directly to AgentgatewayParameters.spec.env.
+// spec.envFrom is injected via AgentgatewayParameters.spec.deployment.spec using
+// strategic merge patch semantics — the "agentgateway" container entry is merged by name.
+func setAgentgatewayParametersSpec(params *unstructured.Unstructured, toolGatewaySpec agentruntimev1alpha1.ToolGatewaySpec) error {
+	// spec.env
+	envVars, err := toUnstructuredSlice(toolGatewaySpec.Env)
+	if err != nil {
+		return fmt.Errorf("failed to convert spec.env: %w", err)
+	}
+	if err := unstructured.SetNestedSlice(params.Object, envVars, "spec", "env"); err != nil {
+		return fmt.Errorf("failed to set spec.env: %w", err)
+	}
+
+	// spec.envFrom → spec.deployment.spec (strategic merge patch on the container)
+	envFromSources, err := toUnstructuredSlice(toolGatewaySpec.EnvFrom)
+	if err != nil {
+		return fmt.Errorf("failed to convert spec.envFrom: %w", err)
+	}
+	deploymentSpec := map[string]interface{}{
+		"template": map[string]interface{}{
+			"spec": map[string]interface{}{
+				"containers": []interface{}{
+					map[string]interface{}{
+						"name":    "agentgateway",
+						"envFrom": envFromSources,
+					},
+				},
+			},
+		},
+	}
+	if err := unstructured.SetNestedMap(params.Object, deploymentSpec, "spec", "deployment", "spec"); err != nil {
+		return fmt.Errorf("failed to set spec.deployment.spec: %w", err)
+	}
+	return nil
+}
+
+// toUnstructuredSlice converts a slice of any runtime.Object-compatible value to
+// []interface{} suitable for use in an unstructured resource.
+func toUnstructuredSlice[T any](items []T) ([]interface{}, error) {
+	result := make([]interface{}, 0, len(items))
+	for i := range items {
+		m, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&items[i])
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, m)
+	}
+	return result, nil
 }

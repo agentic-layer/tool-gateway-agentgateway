@@ -56,6 +56,7 @@ type ToolGatewayReconciler struct {
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=agentgateway.dev,resources=agentgatewaybackends,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=agentgateway.dev,resources=agentgatewayparameters,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -83,6 +84,13 @@ func (r *ToolGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if !r.shouldProcessToolGateway(ctx, &toolGateway) {
 		log.Info("Controller is not responsible for this ToolGateway, skipping reconciliation")
 		return ctrl.Result{}, nil
+	}
+
+	if err := r.ensureAgentgatewayParameters(ctx, &toolGateway); err != nil {
+		log.Error(err, "Failed to ensure AgentgatewayParameters")
+		r.Recorder.Eventf(&toolGateway, nil, "Warning", "AgentgatewayParametersFailed", "AgentgatewayParametersFailed", "%s", err.Error())
+		_ = r.updateStatus(ctx, &toolGateway, err)
+		return ctrl.Result{}, err
 	}
 
 	// Create or update the Gateway for this ToolGateway
@@ -184,6 +192,15 @@ func (r *ToolGatewayReconciler) ensureGateway(ctx context.Context, toolGateway *
 				},
 			},
 		}
+
+		gateway.Spec.Infrastructure = &gatewayv1.GatewayInfrastructure{
+			ParametersRef: &gatewayv1.LocalParametersReference{
+				Group: "agentgateway.dev",
+				Kind:  "AgentgatewayParameters",
+				Name:  toolGateway.Name,
+			},
+		}
+
 		return nil
 	})
 
@@ -231,6 +248,38 @@ func (r *ToolGatewayReconciler) updateStatus(ctx context.Context, toolGateway *a
 	}
 
 	return r.Status().Patch(ctx, toolGateway, patch)
+}
+
+// ensureAgentgatewayParameters creates or updates an AgentgatewayParameters resource when Environment is configured
+func (r *ToolGatewayReconciler) ensureAgentgatewayParameters(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway) error {
+	log := logf.FromContext(ctx)
+
+	params := newAgentgatewayParameters(toolGateway.Name, toolGateway.Namespace)
+
+	op, err := controllerutil.CreateOrPatch(ctx, r.Client, params, func() error {
+		if err := controllerutil.SetControllerReference(toolGateway, params, r.Scheme); err != nil {
+			return err
+		}
+
+		return setAgentgatewayParametersSpec(params, toolGateway.Spec)
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to create or update AgentgatewayParameters: %w", err)
+	}
+
+	log.Info("AgentgatewayParameters reconciled", "operation", op, "name", params.GetName())
+
+	switch op {
+	case controllerutil.OperationResultCreated:
+		r.Recorder.Eventf(toolGateway, nil, "Normal", "AgentgatewayParametersCreated", "AgentgatewayParametersCreated",
+			"Created AgentgatewayParameters %s", params.GetName())
+	case controllerutil.OperationResultUpdated:
+		r.Recorder.Eventf(toolGateway, nil, "Normal", "AgentgatewayParametersUpdated", "AgentgatewayParametersUpdated",
+			"Updated AgentgatewayParameters %s", params.GetName())
+	}
+
+	return nil
 }
 
 // ensureMultiplexRoutes creates multiplex MCP routes for the ToolGateway
@@ -396,10 +445,12 @@ func (r *ToolGatewayReconciler) ensureMultiplexRoute(ctx context.Context, toolGa
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ToolGatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	agentgatewayParams := newAgentgatewayParameters("", "")
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&agentruntimev1alpha1.ToolGateway{}).
 		Owns(&gatewayv1.Gateway{}).
 		Owns(&gatewayv1.HTTPRoute{}).
+		Owns(agentgatewayParams).
 		Watches(
 			&agentruntimev1alpha1.ToolServer{},
 			handler.EnqueueRequestsFromMapFunc(r.findToolGatewayForToolServer),

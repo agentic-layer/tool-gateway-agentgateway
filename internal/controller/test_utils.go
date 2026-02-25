@@ -21,6 +21,7 @@ import (
 
 	agentruntimev1alpha1 "github.com/agentic-layer/agent-runtime-operator/api/v1alpha1"
 	"github.com/onsi/gomega"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
@@ -54,5 +55,14 @@ func cleanupTestResources(ctx context.Context, k8sClient client.Client, namespac
 	gomega.Expect(k8sClient.List(ctx, httpRouteList, &client.ListOptions{Namespace: namespace})).To(gomega.Succeed())
 	for i := range httpRouteList.Items {
 		_ = k8sClient.Delete(ctx, &httpRouteList.Items[i])
+	}
+
+	// Clean up all AgentgatewayParameters in the namespace
+	agentgatewayParamsList := &unstructured.UnstructuredList{}
+	agentgatewayParamsList.SetAPIVersion("agentgateway.dev/v1alpha1")
+	agentgatewayParamsList.SetKind("AgentgatewayParametersList")
+	_ = k8sClient.List(ctx, agentgatewayParamsList, &client.ListOptions{Namespace: namespace})
+	for i := range agentgatewayParamsList.Items {
+		_ = k8sClient.Delete(ctx, &agentgatewayParamsList.Items[i])
 	}
 }

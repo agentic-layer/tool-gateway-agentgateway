@@ -19,6 +19,7 @@ package e2e
 import (
 	"context"
 	"os/exec"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -122,6 +123,34 @@ var _ = Describe("ToolGateway", func() {
 					"namespace-b-server-c_get_info",
 				}))
 			}, 2*time.Minute, 5*time.Second).Should(Succeed(), "root aggregate tools did not match")
+		})
+	})
+
+	Describe("env var propagation", func() {
+		It("should propagate spec.env to the agentgateway pod spec", func() {
+			By("verifying TEST_GATEWAY_ENV_VAR is present in the agentgateway pod spec")
+			Eventually(func(g Gomega) {
+				output, err := utils.Run(exec.Command("kubectl", "get", "pods",
+					"-n", toolGateway.Namespace,
+					"-o", `jsonpath={.items[0].spec.containers[0].env[?(@.name=="TEST_GATEWAY_ENV_VAR")].value}`))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(output)).To(Equal("hello-from-toolgateway"))
+			}, 30*time.Second, 5*time.Second).Should(Succeed(), "TEST_GATEWAY_ENV_VAR not found in agentgateway pod spec")
+		})
+	})
+
+	Describe("envFrom propagation", func() {
+		It("should propagate spec.envFrom to the agentgateway pod spec", func() {
+			By("verifying test-gateway-config ConfigMap is referenced via envFrom in the agentgateway pod spec")
+			Eventually(func(g Gomega) {
+				output, err := utils.Run(exec.Command("kubectl", "get", "pods",
+					"-n", toolGateway.Namespace,
+					"-o",
+					`jsonpath={.items[0].spec.containers[0].envFrom[?(@.configMapRef.name=="test-gateway-config")].configMapRef.name}`,
+				))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(output)).To(Equal("test-gateway-config"))
+			}, 30*time.Second, 5*time.Second).Should(Succeed(), "test-gateway-config envFrom not found in agentgateway pod spec")
 		})
 	})
 })

@@ -24,6 +24,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	kevents "k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -118,6 +119,12 @@ var _ = Describe("ToolGateway Controller", func() {
 			Expect(gateway.OwnerReferences).To(HaveLen(1))
 			Expect(gateway.OwnerReferences[0].Name).To(Equal("test-basic-gateway"))
 			Expect(gateway.OwnerReferences[0].Kind).To(Equal("ToolGateway"))
+
+			Expect(gateway.Spec.Infrastructure).NotTo(BeNil())
+			Expect(gateway.Spec.Infrastructure.ParametersRef).NotTo(BeNil())
+			Expect(string(gateway.Spec.Infrastructure.ParametersRef.Group)).To(Equal("agentgateway.dev"))
+			Expect(string(gateway.Spec.Infrastructure.ParametersRef.Kind)).To(Equal("AgentgatewayParameters"))
+			Expect(gateway.Spec.Infrastructure.ParametersRef.Name).To(Equal("test-basic-gateway"))
 
 			// Check status URL and Ready condition
 			updated := &agentruntimev1alpha1.ToolGateway{}
@@ -334,6 +341,95 @@ var _ = Describe("ToolGateway Controller", func() {
 			Expect(nsRoute.Spec.Rules).To(HaveLen(1))
 			Expect(nsRoute.Spec.Rules[0].Matches).To(HaveLen(1))
 			Expect(*nsRoute.Spec.Rules[0].Matches[0].Path.Value).To(Equal("/default/mcp"))
+		})
+
+		It("should pass spec.env through to AgentgatewayParameters", func() {
+			toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-class-env"},
+				Spec:       agentruntimev1alpha1.ToolGatewayClassSpec{Controller: "runtime.agentic-layer.ai/tool-gateway-agentgateway-controller"},
+			}
+			Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
+
+			toolGateway := &agentruntimev1alpha1.ToolGateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-env-gateway", Namespace: "default"},
+				Spec: agentruntimev1alpha1.ToolGatewaySpec{
+					ToolGatewayClassName: "test-class-env",
+					Env: []corev1.EnvVar{
+						{Name: "MY_VAR", Value: "my-value"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, toolGateway)).To(Succeed())
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Name: "test-env-gateway", Namespace: "default"}, &agentruntimev1alpha1.ToolGateway{})
+			}, "10s", "1s").Should(Succeed())
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: "test-env-gateway", Namespace: "default"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			params := &unstructured.Unstructured{}
+			params.SetAPIVersion("agentgateway.dev/v1alpha1")
+			params.SetKind("AgentgatewayParameters")
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Name: "test-env-gateway", Namespace: "default"}, params)
+			}, "10s", "1s").Should(Succeed())
+
+			envVars, found, err := unstructured.NestedSlice(params.Object, "spec", "env")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(envVars).To(HaveLen(1))
+			Expect(envVars[0].(map[string]interface{})["name"]).To(Equal("MY_VAR"))
+			Expect(envVars[0].(map[string]interface{})["value"]).To(Equal("my-value"))
+
+			Expect(params.GetOwnerReferences()).To(HaveLen(1))
+			Expect(params.GetOwnerReferences()[0].Name).To(Equal("test-env-gateway"))
+		})
+
+		It("should pass spec.envFrom through to AgentgatewayParameters deployment spec", func() {
+			toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-class-envfrom"},
+				Spec:       agentruntimev1alpha1.ToolGatewayClassSpec{Controller: "runtime.agentic-layer.ai/tool-gateway-agentgateway-controller"},
+			}
+			Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
+
+			toolGateway := &agentruntimev1alpha1.ToolGateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-envfrom-gateway", Namespace: "default"},
+				Spec: agentruntimev1alpha1.ToolGatewaySpec{
+					ToolGatewayClassName: "test-class-envfrom",
+					EnvFrom: []corev1.EnvFromSource{
+						{ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "my-config"}}},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, toolGateway)).To(Succeed())
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Name: "test-envfrom-gateway", Namespace: "default"}, &agentruntimev1alpha1.ToolGateway{})
+			}, "10s", "1s").Should(Succeed())
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: "test-envfrom-gateway", Namespace: "default"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			params := &unstructured.Unstructured{}
+			params.SetAPIVersion("agentgateway.dev/v1alpha1")
+			params.SetKind("AgentgatewayParameters")
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Name: "test-envfrom-gateway", Namespace: "default"}, params)
+			}, "10s", "1s").Should(Succeed())
+
+			containers, found, err := unstructured.NestedSlice(params.Object, "spec", "deployment", "spec", "template", "spec", "containers")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(containers).To(HaveLen(1))
+			container := containers[0].(map[string]interface{})
+			Expect(container["name"]).To(Equal("agentgateway"))
+			envFromList := container["envFrom"].([]interface{})
+			Expect(envFromList).To(HaveLen(1))
+			configMapRef := envFromList[0].(map[string]interface{})["configMapRef"].(map[string]interface{})
+			Expect(configMapRef["name"]).To(Equal("my-config"))
 		})
 
 		It("should skip multiplex routes when no ToolServers are available", func() {
