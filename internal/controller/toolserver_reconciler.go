@@ -24,7 +24,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/record"
+	kevents "k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -40,7 +40,7 @@ const ToolServerAgentgatewayControllerName = "runtime.agentic-layer.ai/toolserve
 type ToolServerReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	Recorder kevents.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=runtime.agentic-layer.ai,resources=toolservers,verbs=get;list;watch
@@ -78,14 +78,14 @@ func (r *ToolServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// Create or update AgentgatewayBackend
 	if err := r.ensureAgentgatewayBackend(ctx, &toolServer); err != nil {
 		log.Error(err, "Failed to ensure AgentgatewayBackend")
-		r.Recorder.Event(&toolServer, "Warning", "BackendFailed", err.Error())
+		r.Recorder.Eventf(&toolServer, nil, "Warning", "BackendFailed", "BackendFailed", "%s", err.Error())
 		return ctrl.Result{}, err
 	}
 
 	// Create or update HTTPRoute
 	if err := r.ensureHTTPRoute(ctx, &toolServer, gatewayRef); err != nil {
 		log.Error(err, "Failed to ensure HTTPRoute")
-		r.Recorder.Event(&toolServer, "Warning", "RouteFailed", err.Error())
+		r.Recorder.Eventf(&toolServer, nil, "Warning", "RouteFailed", "RouteFailed", "%s", err.Error())
 		return ctrl.Result{}, err
 	}
 
@@ -124,11 +124,11 @@ func (r *ToolServerReconciler) ensureAgentgatewayBackend(
 	// Record event
 	switch op {
 	case controllerutil.OperationResultCreated:
-		r.Recorder.Event(toolServer, "Normal", "BackendCreated",
-			fmt.Sprintf("Created AgentgatewayBackend %s/%s", toolServer.Namespace, toolServer.Name))
+		r.Recorder.Eventf(toolServer, nil, "Normal", "BackendCreated", "BackendCreated",
+			"Created AgentgatewayBackend %s/%s", toolServer.Namespace, toolServer.Name)
 	case controllerutil.OperationResultUpdated:
-		r.Recorder.Event(toolServer, "Normal", "BackendUpdated",
-			fmt.Sprintf("Updated AgentgatewayBackend %s/%s", toolServer.Namespace, toolServer.Name))
+		r.Recorder.Eventf(toolServer, nil, "Normal", "BackendUpdated", "BackendUpdated",
+			"Updated AgentgatewayBackend %s/%s", toolServer.Namespace, toolServer.Name)
 	}
 
 	return nil
@@ -181,11 +181,11 @@ func (r *ToolServerReconciler) ensureHTTPRoute(
 	// Record event
 	switch op {
 	case controllerutil.OperationResultCreated:
-		r.Recorder.Event(toolServer, "Normal", "RouteCreated",
-			fmt.Sprintf("Created HTTPRoute %s for Gateway %s/%s", route.Name, gatewayRef.Namespace, gatewayRef.Name))
+		r.Recorder.Eventf(toolServer, nil, "Normal", "RouteCreated", "RouteCreated",
+			"Created HTTPRoute %s for Gateway %s/%s", route.Name, gatewayRef.Namespace, gatewayRef.Name)
 	case controllerutil.OperationResultUpdated:
-		r.Recorder.Event(toolServer, "Normal", "RouteUpdated",
-			fmt.Sprintf("Updated HTTPRoute %s for Gateway %s/%s", route.Name, gatewayRef.Namespace, gatewayRef.Name))
+		r.Recorder.Eventf(toolServer, nil, "Normal", "RouteUpdated", "RouteUpdated",
+			"Updated HTTPRoute %s for Gateway %s/%s", route.Name, gatewayRef.Namespace, gatewayRef.Name)
 	}
 
 	return nil
