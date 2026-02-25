@@ -72,6 +72,7 @@ var _ = Describe("ToolServer Controller", func() {
 					Port:          8000,
 					Protocol:      "mcp",
 					TransportType: "http",
+					Path:          "/custom-mcp",
 				},
 			}
 			Expect(k8sClient.Create(ctx, toolServer)).To(Succeed())
@@ -117,9 +118,20 @@ var _ = Describe("ToolServer Controller", func() {
 			Expect(httpRoute.OwnerReferences).To(HaveLen(1))
 			Expect(httpRoute.OwnerReferences[0].Name).To(Equal("test-tool-server"))
 			Expect(httpRoute.OwnerReferences[0].Kind).To(Equal("ToolServer"))
+
+			// Verify backend target uses Spec.Path (/custom-mcp)
+			backend := &unstructured.Unstructured{}
+			backend.SetAPIVersion("agentgateway.dev/v1alpha1")
+			backend.SetKind("AgentgatewayBackend")
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Name: "test-gateway-test-tool-server", Namespace: "default"}, backend)
+			}, "10s", "1s").Should(Succeed())
+			targets, _, _ := unstructured.NestedSlice(backend.Object, "spec", "mcp", "targets")
+			Expect(targets).To(HaveLen(1))
+			Expect(targets[0].(map[string]interface{})["static"].(map[string]interface{})["path"]).To(Equal("/custom-mcp"))
 		})
 
-		It("should create HTTPRoute for SSE transport with /sse path", func() {
+		It("should create HTTPRoute for SSE transport and set backend path from Spec.Path", func() {
 			toolServer := &agentruntimev1alpha1.ToolServer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-sse-server",
@@ -130,6 +142,7 @@ var _ = Describe("ToolServer Controller", func() {
 					Port:          8000,
 					Protocol:      "mcp",
 					TransportType: "sse",
+					Path:          "/custom-sse",
 				},
 			}
 			Expect(k8sClient.Create(ctx, toolServer)).To(Succeed())
@@ -166,7 +179,19 @@ var _ = Describe("ToolServer Controller", func() {
 				}, httpRoute)
 			}, "10s", "1s").Should(Succeed())
 
-			Expect(httpRoute.Spec.Rules[0].Matches[0].Path.Value).To(Equal(stringPtr("/default/test-sse-server/sse")))
+			// HTTPRoute uses computed gateway-facing path (always /mcp suffix)
+			Expect(httpRoute.Spec.Rules[0].Matches[0].Path.Value).To(Equal(stringPtr("/default/test-sse-server/mcp")))
+
+			// Verify backend target uses Spec.Path (/custom-sse)
+			backend := &unstructured.Unstructured{}
+			backend.SetAPIVersion("agentgateway.dev/v1alpha1")
+			backend.SetKind("AgentgatewayBackend")
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Name: "sse-test-gateway-test-sse-server", Namespace: "default"}, backend)
+			}, "10s", "1s").Should(Succeed())
+			targets, _, _ := unstructured.NestedSlice(backend.Object, "spec", "mcp", "targets")
+			Expect(targets).To(HaveLen(1))
+			Expect(targets[0].(map[string]interface{})["static"].(map[string]interface{})["path"]).To(Equal("/custom-sse"))
 		})
 
 		It("should skip reconciliation when no ToolGatewayRef in status", func() {
@@ -180,6 +205,7 @@ var _ = Describe("ToolServer Controller", func() {
 					Port:          8000,
 					Protocol:      "mcp",
 					TransportType: "http",
+					Path:          "/mcp",
 				},
 			}
 			Expect(k8sClient.Create(ctx, toolServer)).To(Succeed())
@@ -208,7 +234,7 @@ var _ = Describe("ToolServer Controller", func() {
 			}
 		})
 
-		It("should update HTTPRoute path when ToolServer TransportType changes", func() {
+		It("should update AgentgatewayBackend path when ToolServer Path changes", func() {
 			toolServer := &agentruntimev1alpha1.ToolServer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-update-transport",
@@ -219,6 +245,7 @@ var _ = Describe("ToolServer Controller", func() {
 					Port:          8000,
 					Protocol:      "mcp",
 					TransportType: "http",
+					Path:          "/mcp",
 				},
 			}
 			Expect(k8sClient.Create(ctx, toolServer)).To(Succeed())
@@ -235,45 +262,60 @@ var _ = Describe("ToolServer Controller", func() {
 				return ts.Status.ToolGatewayRef != nil
 			}, "10s", "1s").Should(BeTrue())
 
-			// First reconcile – creates HTTPRoute with /mcp path
+			// First reconcile – creates backend with path /mcp and HTTPRoute with computed path
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{Name: "test-update-transport", Namespace: "default"},
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			httpRoute := &gatewayv1.HTTPRoute{}
+			backend := &unstructured.Unstructured{}
+			backend.SetAPIVersion("agentgateway.dev/v1alpha1")
+			backend.SetKind("AgentgatewayBackend")
 			Eventually(func() error {
-				return k8sClient.Get(ctx, types.NamespacedName{Name: "test-gateway-test-update-transport", Namespace: "default"}, httpRoute)
+				return k8sClient.Get(ctx, types.NamespacedName{Name: "test-gateway-test-update-transport", Namespace: "default"}, backend)
 			}, "10s", "1s").Should(Succeed())
+			targets, _, _ := unstructured.NestedSlice(backend.Object, "spec", "mcp", "targets")
+			Expect(targets[0].(map[string]interface{})["static"].(map[string]interface{})["path"]).To(Equal("/mcp"))
+
+			// HTTPRoute gateway-facing path is computed and does not change with Spec.Path
+			httpRoute := &gatewayv1.HTTPRoute{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "test-gateway-test-update-transport", Namespace: "default"}, httpRoute)).To(Succeed())
 			Expect(httpRoute.Spec.Rules[0].Matches[0].Path.Value).To(Equal(stringPtr("/default/test-update-transport/mcp")))
 
-			// Update TransportType to sse
+			// Update Path to /sse
 			ts := &agentruntimev1alpha1.ToolServer{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "test-update-transport", Namespace: "default"}, ts)).To(Succeed())
 			patch := client.MergeFrom(ts.DeepCopy())
-			ts.Spec.TransportType = "sse"
+			ts.Spec.Path = "/sse"
 			Expect(k8sClient.Patch(ctx, ts, patch)).To(Succeed())
 
 			Eventually(func() string {
 				updated := &agentruntimev1alpha1.ToolServer{}
 				_ = k8sClient.Get(ctx, types.NamespacedName{Name: "test-update-transport", Namespace: "default"}, updated)
-				return updated.Spec.TransportType
-			}, "10s", "1s").Should(Equal("sse"))
+				return updated.Spec.Path
+			}, "10s", "1s").Should(Equal("/sse"))
 
-			// Second reconcile – should update HTTPRoute path to /sse
+			// Second reconcile – should update backend target path to /sse
 			_, err = reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{Name: "test-update-transport", Namespace: "default"},
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			updatedRoute := &gatewayv1.HTTPRoute{}
-			Eventually(func() *string {
-				_ = k8sClient.Get(ctx, types.NamespacedName{Name: "test-gateway-test-update-transport", Namespace: "default"}, updatedRoute)
-				if len(updatedRoute.Spec.Rules) == 0 || len(updatedRoute.Spec.Rules[0].Matches) == 0 {
-					return nil
+			updatedBackend := &unstructured.Unstructured{}
+			updatedBackend.SetAPIVersion("agentgateway.dev/v1alpha1")
+			updatedBackend.SetKind("AgentgatewayBackend")
+			Eventually(func() string {
+				_ = k8sClient.Get(ctx, types.NamespacedName{Name: "test-gateway-test-update-transport", Namespace: "default"}, updatedBackend)
+				targets, _, _ := unstructured.NestedSlice(updatedBackend.Object, "spec", "mcp", "targets")
+				if len(targets) == 0 {
+					return ""
 				}
-				return updatedRoute.Spec.Rules[0].Matches[0].Path.Value
-			}, "10s", "1s").Should(Equal(stringPtr("/default/test-update-transport/sse")))
+				path, _, _ := unstructured.NestedString(
+					targets[0].(map[string]interface{}),
+					"static", "path",
+				)
+				return path
+			}, "10s", "1s").Should(Equal("/sse"))
 		})
 
 		It("should update HTTPRoute parent ref when ToolGatewayRef changes", func() {
@@ -287,6 +329,7 @@ var _ = Describe("ToolServer Controller", func() {
 					Port:          8000,
 					Protocol:      "mcp",
 					TransportType: "http",
+					Path:          "/mcp",
 				},
 			}
 			Expect(k8sClient.Create(ctx, toolServer)).To(Succeed())
@@ -360,6 +403,7 @@ var _ = Describe("ToolServer Controller", func() {
 					Port:          8000,
 					Protocol:      "mcp",
 					TransportType: "http",
+					Path:          "/mcp",
 				},
 			}
 			Expect(k8sClient.Create(ctx, toolServer)).To(Succeed())

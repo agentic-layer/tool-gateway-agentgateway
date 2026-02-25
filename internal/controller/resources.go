@@ -38,12 +38,13 @@ func newAgentgatewayBackend(name, namespace string) *unstructured.Unstructured {
 }
 
 // buildMCPTarget builds a single MCP target entry for an AgentgatewayBackend spec.
-func buildMCPTarget(name, host string, port int32) map[string]interface{} {
+func buildMCPTarget(name, host string, port int32, path string) map[string]interface{} {
 	return map[string]interface{}{
 		"name": name,
 		"static": map[string]interface{}{
 			"host":     host,
 			"port":     int64(port),
+			"path":     path,
 			"protocol": "StreamableHTTP",
 		},
 	}

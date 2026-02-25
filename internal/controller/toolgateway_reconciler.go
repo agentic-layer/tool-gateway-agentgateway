@@ -370,6 +370,7 @@ func (r *ToolGatewayReconciler) ensureMultiplexBackend(ctx context.Context, tool
 				fmt.Sprintf("%s-%s", ts.Namespace, ts.Name),
 				toolServerHost(ts.Name, ts.Namespace),
 				ts.Spec.Port,
+				ts.Spec.Path,
 			))
 		}
 
