@@ -47,22 +47,6 @@ const (
 	otelExporterOTLPLogsHeaders    = "OTEL_EXPORTER_OTLP_LOGS_HEADERS"
 )
 
-// otelEnvVars is a list of all OTEL environment variables that should be translated
-var otelEnvVars = []string{
-	otelExporterOTLPEndpoint,
-	otelExporterOTLPProtocol,
-	otelExporterOTLPHeaders,
-	otelExporterOTLPTracesEndpoint,
-	otelExporterOTLPMetricsEndpoint,
-	otelExporterOTLPLogsEndpoint,
-	otelExporterOTLPTracesProtocol,
-	otelExporterOTLPMetricsProtocol,
-	otelExporterOTLPLogsProtocol,
-	otelExporterOTLPTracesHeaders,
-	otelExporterOTLPMetricsHeaders,
-	otelExporterOTLPLogsHeaders,
-}
-
 // otelConfig represents the extracted OTEL configuration from environment variables
 type otelConfig struct {
 	endpoint string

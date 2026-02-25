@@ -1,0 +1,111 @@
+# This sample demonstrates OTEL environment variable translation to agentgateway config.
+# When OTEL_EXPORTER_OTLP_* environment variables are set in a ToolGateway,
+# they are automatically translated to the agentgateway telemetry configuration
+# and NOT passed as environment variables to the agentgateway container.
+#
+# Apply to a test cluster using:
+#   kubectl apply -f toolgateway_v1alpha1_otel_example.yaml
+
+# Create the tool-gateway namespace
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tool-gateway
+
+# ToolGatewayClass - defines the controller implementation
+---
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: ToolGatewayClass
+metadata:
+  name: agentgateway
+  namespace: tool-gateway
+  annotations:
+    toolgatewayclass.kubernetes.io/is-default-class: "true"
+spec:
+  controller: runtime.agentic-layer.ai/tool-gateway-agentgateway-controller
+
+# ToolGateway with OTEL configuration
+# The OTEL env vars below will be translated to agentgateway's rawConfig.telemetry section
+---
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: ToolGateway
+metadata:
+  name: gateway-with-otel
+  namespace: tool-gateway
+spec:
+  toolGatewayClassName: agentgateway
+  env:
+    # Standard OTEL environment variables - these will be translated to config
+    - name: OTEL_EXPORTER_OTLP_ENDPOINT
+      value: "http://otel-collector.observability.svc.cluster.local:4318"
+    - name: OTEL_EXPORTER_OTLP_PROTOCOL
+      value: "http/protobuf"
+    - name: OTEL_EXPORTER_OTLP_HEADERS
+      value: "api-key=my-secret-key,environment=production"
+    
+    # Non-OTEL env vars - these will be passed through as-is
+    - name: LOG_LEVEL
+      value: "info"
+    - name: APP_NAME
+      value: "my-agentgateway"
+
+# The above configuration will result in an AgentgatewayParameters with:
+# spec:
+#   rawConfig:
+#     telemetry:
+#       tracing:
+#         otlpEndpoint: "http://otel-collector.observability.svc.cluster.local:4318"
+#         otlpProtocol: "http"
+#         headers:
+#           api-key: "my-secret-key"
+#           environment: "production"
+#   env:
+#     - name: LOG_LEVEL
+#       value: "info"
+#     - name: APP_NAME
+#       value: "my-agentgateway"
+#
+# Note: The OTEL_EXPORTER_OTLP_* env vars are NOT in the env list above.
+
+---
+# Example with signal-specific OTEL configuration
+# This shows how signal-specific env vars override the general ones
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: ToolGateway
+metadata:
+  name: gateway-with-signal-specific-otel
+  namespace: tool-gateway
+spec:
+  toolGatewayClassName: agentgateway
+  env:
+    # General OTEL configuration
+    - name: OTEL_EXPORTER_OTLP_ENDPOINT
+      value: "http://otel-collector:4318"
+    - name: OTEL_EXPORTER_OTLP_PROTOCOL
+      value: "http/protobuf"
+    
+    # Signal-specific configuration overrides
+    - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+      value: "http://jaeger-collector:4318"
+    - name: OTEL_EXPORTER_OTLP_TRACES_PROTOCOL
+      value: "grpc"
+    - name: OTEL_EXPORTER_OTLP_TRACES_HEADERS
+      value: "trace-api-key=trace-secret"
+    
+    # Regular env vars
+    - name: SERVICE_NAME
+      value: "my-service"
+
+# This will result in:
+# spec:
+#   rawConfig:
+#     telemetry:
+#       tracing:
+#         otlpEndpoint: "http://jaeger-collector:4318"  # traces-specific overrides general
+#         otlpProtocol: "grpc"                          # traces-specific overrides general
+#         headers:
+#           trace-api-key: "trace-secret"
+#   env:
+#     - name: SERVICE_NAME
+#       value: "my-service"

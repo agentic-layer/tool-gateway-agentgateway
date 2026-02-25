@@ -119,6 +119,49 @@ spec:
 
 This will create a `my-tool-gateway` Gateway in the `my-namespace` namespace.
 
+#### OpenTelemetry (OTEL) Configuration
+
+The operator automatically translates standard OpenTelemetry environment variables to agentgateway's telemetry configuration. This provides seamless observability integration without requiring manual configuration of agentgateway's config file.
+
+**Supported OTEL Environment Variables:**
+
+- `OTEL_EXPORTER_OTLP_ENDPOINT` - The OTLP exporter endpoint URL
+- `OTEL_EXPORTER_OTLP_PROTOCOL` - The protocol to use (grpc or http)
+- `OTEL_EXPORTER_OTLP_HEADERS` - Headers to send with telemetry data
+- Signal-specific overrides:
+  - `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`
+  - `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`
+  - `OTEL_EXPORTER_OTLP_TRACES_HEADERS`
+  - (Similar for METRICS and LOGS)
+
+**Example:**
+
+```yaml
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: ToolGateway
+metadata:
+  name: my-tool-gateway
+  namespace: my-namespace
+spec:
+  toolGatewayClassName: agentgateway
+  env:
+    # OTEL configuration - automatically translated to agentgateway config
+    - name: OTEL_EXPORTER_OTLP_ENDPOINT
+      value: "http://otel-collector:4318"
+    - name: OTEL_EXPORTER_OTLP_PROTOCOL
+      value: "http/protobuf"
+    - name: OTEL_EXPORTER_OTLP_HEADERS
+      value: "api-key=secret123"
+    
+    # Other environment variables are passed through as-is
+    - name: LOG_LEVEL
+      value: "info"
+```
+
+The OTEL environment variables are translated to agentgateway's `rawConfig.telemetry` section and are **not** passed as environment variables to the agentgateway container. Other environment variables (like `LOG_LEVEL` above) are passed through unchanged.
+
+See `config/samples/toolgateway_v1alpha1_otel_example.yaml` for complete examples.
+
 ### ToolServer Configuration
 
 Define ToolServer resources that the gateway will route to:
