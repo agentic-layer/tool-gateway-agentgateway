@@ -108,6 +108,11 @@ func extractOTELEnvVars(envVars []corev1.EnvVar) (otelConfig, []corev1.EnvVar) {
 // AgentgatewayRawConfig represents the agentgateway raw configuration structure.
 // Reference: https://raw.githubusercontent.com/agentgateway/agentgateway/refs/heads/main/schema/config.json
 type AgentgatewayRawConfig struct {
+	Config *AgentgatewayConfig `json:"config,omitempty"`
+}
+
+// AgentgatewayConfig represents the agentgateway config structure.
+type AgentgatewayConfig struct {
 	Tracing *AgentgatewayTracing `json:"tracing,omitempty"`
 }
 
@@ -192,7 +197,9 @@ func buildTelemetryConfig(config otelConfig) map[string]interface{} {
 
 	// Convert to map for unstructured usage
 	rawConfig := &AgentgatewayRawConfig{
-		Tracing: tracing,
+		Config: &AgentgatewayConfig{
+			Tracing: tracing,
+		},
 	}
 
 	// Convert struct to map[string]interface{}
