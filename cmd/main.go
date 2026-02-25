@@ -208,7 +208,7 @@ func main() {
 	if err = (&controller.ToolGatewayReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("tool-gateway-agentgateway-controller"),
+		Recorder: mgr.GetEventRecorder("tool-gateway-agentgateway-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ToolGateway")
 		os.Exit(1)
@@ -216,7 +216,7 @@ func main() {
 	if err = (&controller.ToolServerReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("toolserver-agentgateway-controller"),
+		Recorder: mgr.GetEventRecorder("toolserver-agentgateway-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ToolServer")
 		os.Exit(1)

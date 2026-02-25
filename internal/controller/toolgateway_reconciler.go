@@ -24,7 +24,7 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/record"
+	kevents "k8s.io/client-go/tools/events"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -46,7 +46,7 @@ const (
 type ToolGatewayReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	Recorder kevents.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=runtime.agentic-layer.ai,resources=toolgateways,verbs=get;list;watch;update;patch
@@ -88,7 +88,7 @@ func (r *ToolGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	// Create or update the Gateway for this ToolGateway
 	if err := r.ensureGateway(ctx, &toolGateway); err != nil {
 		log.Error(err, "Failed to ensure Gateway")
-		r.Recorder.Event(&toolGateway, "Warning", "GatewayFailed", err.Error())
+		r.Recorder.Eventf(&toolGateway, nil, "Warning", "GatewayFailed", "GatewayFailed", "%s", err.Error())
 		_ = r.updateStatus(ctx, &toolGateway, err)
 		return ctrl.Result{}, err
 	}
@@ -96,7 +96,7 @@ func (r *ToolGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	// Create or update multiplex routes for MCP
 	if err := r.ensureMultiplexRoutes(ctx, &toolGateway); err != nil {
 		log.Error(err, "Failed to ensure multiplex routes")
-		r.Recorder.Event(&toolGateway, "Warning", "MultiplexRoutesFailed", err.Error())
+		r.Recorder.Eventf(&toolGateway, nil, "Warning", "MultiplexRoutesFailed", "MultiplexRoutesFailed", "%s", err.Error())
 		_ = r.updateStatus(ctx, &toolGateway, err)
 		return ctrl.Result{}, err
 	}
@@ -118,8 +118,8 @@ func (r *ToolGatewayReconciler) shouldProcessToolGateway(ctx context.Context, to
 	var toolGatewayClassList agentruntimev1alpha1.ToolGatewayClassList
 	if err := r.List(ctx, &toolGatewayClassList); err != nil {
 		log.Error(err, "Failed to list ToolGatewayClasses")
-		r.Recorder.Event(toolGateway, "Warning", "ListFailed",
-			fmt.Sprintf("Failed to list ToolGatewayClasses: %v", err))
+		r.Recorder.Eventf(toolGateway, nil, "Warning", "ListFailed", "ListFailed",
+			"Failed to list ToolGatewayClasses: %v", err)
 		return false
 	}
 
@@ -196,11 +196,11 @@ func (r *ToolGatewayReconciler) ensureGateway(ctx context.Context, toolGateway *
 	// Record event for user visibility
 	switch op {
 	case controllerutil.OperationResultCreated:
-		r.Recorder.Event(toolGateway, "Normal", "GatewayCreated",
-			fmt.Sprintf("Created Gateway %s", gateway.Name))
+		r.Recorder.Eventf(toolGateway, nil, "Normal", "GatewayCreated", "GatewayCreated",
+			"Created Gateway %s", gateway.Name)
 	case controllerutil.OperationResultUpdated:
-		r.Recorder.Event(toolGateway, "Normal", "GatewayUpdated",
-			fmt.Sprintf("Updated Gateway %s", gateway.Name))
+		r.Recorder.Eventf(toolGateway, nil, "Normal", "GatewayUpdated", "GatewayUpdated",
+			"Updated Gateway %s", gateway.Name)
 	}
 
 	return nil
@@ -339,11 +339,11 @@ func (r *ToolGatewayReconciler) ensureMultiplexBackend(ctx context.Context, tool
 
 	switch op {
 	case controllerutil.OperationResultCreated:
-		r.Recorder.Event(toolGateway, "Normal", "MultiplexBackendCreated",
-			fmt.Sprintf("Created multiplex backend %s", backend.GetName()))
+		r.Recorder.Eventf(toolGateway, nil, "Normal", "MultiplexBackendCreated", "MultiplexBackendCreated",
+			"Created multiplex backend %s", backend.GetName())
 	case controllerutil.OperationResultUpdated:
-		r.Recorder.Event(toolGateway, "Normal", "MultiplexBackendUpdated",
-			fmt.Sprintf("Updated multiplex backend %s", backend.GetName()))
+		r.Recorder.Eventf(toolGateway, nil, "Normal", "MultiplexBackendUpdated", "MultiplexBackendUpdated",
+			"Updated multiplex backend %s", backend.GetName())
 	}
 
 	return nil
@@ -384,11 +384,11 @@ func (r *ToolGatewayReconciler) ensureMultiplexRoute(ctx context.Context, toolGa
 
 	switch op {
 	case controllerutil.OperationResultCreated:
-		r.Recorder.Event(toolGateway, "Normal", "MultiplexRouteCreated",
-			fmt.Sprintf("Created multiplex route %s", route.Name))
+		r.Recorder.Eventf(toolGateway, nil, "Normal", "MultiplexRouteCreated", "MultiplexRouteCreated",
+			"Created multiplex route %s", route.Name)
 	case controllerutil.OperationResultUpdated:
-		r.Recorder.Event(toolGateway, "Normal", "MultiplexRouteUpdated",
-			fmt.Sprintf("Updated multiplex route %s", route.Name))
+		r.Recorder.Eventf(toolGateway, nil, "Normal", "MultiplexRouteUpdated", "MultiplexRouteUpdated",
+			"Updated multiplex route %s", route.Name)
 	}
 
 	return nil
