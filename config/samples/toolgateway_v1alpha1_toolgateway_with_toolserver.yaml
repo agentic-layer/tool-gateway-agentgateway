@@ -71,7 +71,7 @@ metadata:
 spec:
   protocol: mcp
   transportType: http
-  image: ghcr.io/agentic-layer/echo-mcp-server:0.2.0
+  image: ghcr.io/agentic-layer/echo-mcp-server:0.3.0
   port: 8000
   replicas: 1
   env:
@@ -95,9 +95,19 @@ metadata:
 spec:
   protocol: mcp
   transportType: http
-  image: ghcr.io/agentic-layer/echo-mcp-server:0.2.0
-  port: 8000
+  image: ghcr.io/agentic-layer/echo-mcp-server:0.3.0
+  args:
+    - "--host"
+    - "0.0.0.0"
+    - "--transport"
+    - "http"
+    - "--port"
+    - "8001"
+    - "--path"
+    - "/custom-path"
+  port: 8001
   replicas: 1
+  path: "/custom-path"
   env:
     - name: ECHO_SERVER_NAME
       value: "Server B"
@@ -119,7 +129,7 @@ metadata:
 spec:
   protocol: mcp
   transportType: http
-  image: ghcr.io/agentic-layer/echo-mcp-server:0.2.0
+  image: ghcr.io/agentic-layer/echo-mcp-server:0.3.0
   port: 8000
   replicas: 1
   env:

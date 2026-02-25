@@ -291,6 +291,7 @@ var _ = Describe("ToolGateway Controller", func() {
 					TransportType: "http",
 					Image:         "test-image",
 					Port:          8000,
+					Path:          "/mcp",
 				},
 			}
 			Expect(k8sClient.Create(ctx, toolServer)).To(Succeed())

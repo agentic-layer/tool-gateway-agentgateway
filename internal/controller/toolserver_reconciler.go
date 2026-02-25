@@ -108,7 +108,7 @@ func (r *ToolServerReconciler) ensureAgentgatewayBackend(
 			return fmt.Errorf("failed to set owner reference: %w", err)
 		}
 
-		target := buildMCPTarget("mcp-target", toolServerHost(toolServer.Name, toolServer.Namespace), toolServer.Spec.Port)
+		target := buildMCPTarget("mcp-target", toolServerHost(toolServer.Name, toolServer.Namespace), toolServer.Spec.Port, toolServer.Spec.Path)
 		if err := setMCPTargets(backend, []interface{}{target}); err != nil {
 			return fmt.Errorf("failed to set backend spec: %w", err)
 		}
@@ -143,11 +143,7 @@ func (r *ToolServerReconciler) ensureHTTPRoute(
 	log := logf.FromContext(ctx)
 
 	// Compute unique path for this ToolServer
-	suffix := "/mcp"
-	if toolServer.Spec.TransportType == "sse" {
-		suffix = "/sse"
-	}
-	path := fmt.Sprintf("/%s/%s%s", toolServer.Namespace, toolServer.Name, suffix)
+	path := fmt.Sprintf("/%s/%s/mcp", toolServer.Namespace, toolServer.Name)
 
 	// HTTPRoute in same namespace as ToolServer, owned by ToolServer
 	route := &gatewayv1.HTTPRoute{
