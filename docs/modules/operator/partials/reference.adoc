@@ -63,7 +63,7 @@ spec:
 **Supported OTEL Environment Variables:**
 
 * `OTEL_EXPORTER_OTLP_ENDPOINT` - The OTLP exporter endpoint URL
-* `OTEL_EXPORTER_OTLP_PROTOCOL` - The protocol to use (grpc or http)
+* `OTEL_EXPORTER_OTLP_PROTOCOL` - The protocol to use (http/protobuf, grpc, or http/json)
 * `OTEL_EXPORTER_OTLP_HEADERS` - Headers to send with telemetry data
 * Signal-specific overrides:
 ** `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`
