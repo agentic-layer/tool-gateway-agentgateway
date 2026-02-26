@@ -12,12 +12,10 @@ This guide walks you through installing the Agentgateway Tool Gateway Operator o
 
 The operator requires the following infrastructure components to be installed first:
 
-* **cert-manager**: For certificate management
-* **Gateway API CRDs**: Standard Kubernetes Gateway API
-* **agentgateway**: Gateway implementation
-* **Agent Runtime Operator**: Provides ToolGateway, ToolGatewayClass, and ToolServer CRDs
-
-For detailed Agent Runtime Operator installation, see xref:agent-runtime-operator:agent-runtime:how-to-guide.adoc[Install the Agent Runtime Operator].
+* **https://cert-manager.io/[cert-manager]**: For certificate management (required for operator webhooks)
+* **https://gateway-api.sigs.k8s.io/[Gateway API CRDs]**: Standard Kubernetes Gateway API (required by agentgateway)
+* **https://www.kgateway.io/[agentgateway]**: Gateway implementation
+* **xref:agent-runtime-operator:agent-runtime:how-to-guide.adoc[Agent Runtime Operator]**: Provides ToolGateway, ToolGatewayClass, and ToolServer CRDs
 
 === Install cert-manager
 
@@ -66,7 +64,7 @@ helm upgrade -i agentgateway \
 
 [source,bash]
 ----
-kubectl apply -f https://github.com/agentic-layer/agent-runtime-operator/releases/download/v0.20.1/install.yaml
+kubectl apply -f https://github.com/agentic-layer/agent-runtime-operator/releases/latest/download/install.yaml
 
 kubectl wait deployment.apps/agent-runtime-operator-controller-manager \
   --for condition=Available \
@@ -152,7 +150,7 @@ To remove all dependencies (optional):
 [source,bash]
 ----
 # Uninstall Agent Runtime Operator
-kubectl delete -f https://github.com/agentic-layer/agent-runtime-operator/releases/download/v0.20.1/install.yaml
+kubectl delete -f https://github.com/agentic-layer/agent-runtime-operator/releases/latest/download/install.yaml
 
 # Uninstall agentgateway
 helm uninstall agentgateway --namespace agentgateway-system

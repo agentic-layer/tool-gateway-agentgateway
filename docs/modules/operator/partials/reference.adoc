@@ -69,9 +69,10 @@ spec:
 ** `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`
 ** `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`
 ** `OTEL_EXPORTER_OTLP_TRACES_HEADERS`
-** (Similar for METRICS and LOGS)
 
-The OTEL environment variables are translated to agentgateway's `rawConfig.telemetry` section and are **not** passed as environment variables to the agentgateway container.
+NOTE: Currently, only **tracing** (traces) is supported. Metrics and logs configuration is not yet implemented.
+
+The OTEL environment variables are translated to agentgateway's `rawConfig.config.tracing` section and are **not** passed as environment variables to the agentgateway container. For the full agentgateway configuration schema, see the https://raw.githubusercontent.com/agentgateway/agentgateway/refs/heads/main/schema/config.json[agentgateway config schema].
 
 === ToolGatewayClass
 
