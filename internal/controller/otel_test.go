@@ -137,8 +137,10 @@ func TestBuildTelemetryConfig(t *testing.T) {
 				endpoint: "http://otel-collector:4318",
 			},
 			expected: map[string]interface{}{
-				"tracing": map[string]interface{}{
-					"otlpEndpoint": "http://otel-collector:4318",
+				"config": map[string]interface{}{
+					"tracing": map[string]interface{}{
+						"otlpEndpoint": "http://otel-collector:4318",
+					},
 				},
 			},
 		},
@@ -149,9 +151,11 @@ func TestBuildTelemetryConfig(t *testing.T) {
 				protocol: "grpc/protobuf",
 			},
 			expected: map[string]interface{}{
-				"tracing": map[string]interface{}{
-					"otlpEndpoint": "http://otel-collector:4317",
-					"otlpProtocol": "grpc",
+				"config": map[string]interface{}{
+					"tracing": map[string]interface{}{
+						"otlpEndpoint": "http://otel-collector:4317",
+						"otlpProtocol": "grpc",
+					},
 				},
 			},
 		},
@@ -162,9 +166,11 @@ func TestBuildTelemetryConfig(t *testing.T) {
 				protocol: "http/protobuf",
 			},
 			expected: map[string]interface{}{
-				"tracing": map[string]interface{}{
-					"otlpEndpoint": "http://otel-collector:4318",
-					"otlpProtocol": "http",
+				"config": map[string]interface{}{
+					"tracing": map[string]interface{}{
+						"otlpEndpoint": "http://otel-collector:4318",
+						"otlpProtocol": "http",
+					},
 				},
 			},
 		},
@@ -175,11 +181,13 @@ func TestBuildTelemetryConfig(t *testing.T) {
 				headers:  "key1=value1,key2=value2",
 			},
 			expected: map[string]interface{}{
-				"tracing": map[string]interface{}{
-					"otlpEndpoint": "http://otel-collector:4318",
-					"headers": map[string]interface{}{
-						"key1": "value1",
-						"key2": "value2",
+				"config": map[string]interface{}{
+					"tracing": map[string]interface{}{
+						"otlpEndpoint": "http://otel-collector:4318",
+						"headers": map[string]interface{}{
+							"key1": "value1",
+							"key2": "value2",
+						},
 					},
 				},
 			},
@@ -191,8 +199,10 @@ func TestBuildTelemetryConfig(t *testing.T) {
 				tracesEndpoint: "http://traces-collector:4318",
 			},
 			expected: map[string]interface{}{
-				"tracing": map[string]interface{}{
-					"otlpEndpoint": "http://traces-collector:4318",
+				"config": map[string]interface{}{
+					"tracing": map[string]interface{}{
+						"otlpEndpoint": "http://traces-collector:4318",
+					},
 				},
 			},
 		},
@@ -204,9 +214,11 @@ func TestBuildTelemetryConfig(t *testing.T) {
 				tracesProtocol: "grpc",
 			},
 			expected: map[string]interface{}{
-				"tracing": map[string]interface{}{
-					"otlpEndpoint": "http://otel-collector:4318",
-					"otlpProtocol": "grpc",
+				"config": map[string]interface{}{
+					"tracing": map[string]interface{}{
+						"otlpEndpoint": "http://otel-collector:4318",
+						"otlpProtocol": "grpc",
+					},
 				},
 			},
 		},
@@ -218,10 +230,12 @@ func TestBuildTelemetryConfig(t *testing.T) {
 				tracesHeaders: "trace-key=trace-value",
 			},
 			expected: map[string]interface{}{
-				"tracing": map[string]interface{}{
-					"otlpEndpoint": "http://otel-collector:4318",
-					"headers": map[string]interface{}{
-						"trace-key": "trace-value",
+				"config": map[string]interface{}{
+					"tracing": map[string]interface{}{
+						"otlpEndpoint": "http://otel-collector:4318",
+						"headers": map[string]interface{}{
+							"trace-key": "trace-value",
+						},
 					},
 				},
 			},
@@ -236,11 +250,13 @@ func TestBuildTelemetryConfig(t *testing.T) {
 				tracesHeaders:  "auth=token123",
 			},
 			expected: map[string]interface{}{
-				"tracing": map[string]interface{}{
-					"otlpEndpoint": "http://traces-collector:4318",
-					"otlpProtocol": "grpc",
-					"headers": map[string]interface{}{
-						"auth": "token123",
+				"config": map[string]interface{}{
+					"tracing": map[string]interface{}{
+						"otlpEndpoint": "http://traces-collector:4318",
+						"otlpProtocol": "grpc",
+						"headers": map[string]interface{}{
+							"auth": "token123",
+						},
 					},
 				},
 			},
