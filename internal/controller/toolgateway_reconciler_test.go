@@ -472,5 +472,41 @@ var _ = Describe("ToolGateway Controller", func() {
 			}, rootRoute)
 			Expect(err).To(HaveOccurred())
 		})
+
+		It("should set Service type to ClusterIP in AgentgatewayParameters", func() {
+			toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-class-service"},
+				Spec:       agentruntimev1alpha1.ToolGatewayClassSpec{Controller: "runtime.agentic-layer.ai/tool-gateway-agentgateway-controller"},
+			}
+			Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
+
+			toolGateway := &agentruntimev1alpha1.ToolGateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-service-gateway", Namespace: "default"},
+				Spec: agentruntimev1alpha1.ToolGatewaySpec{
+					ToolGatewayClassName: "test-class-service",
+				},
+			}
+			Expect(k8sClient.Create(ctx, toolGateway)).To(Succeed())
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Name: "test-service-gateway", Namespace: "default"}, &agentruntimev1alpha1.ToolGateway{})
+			}, "10s", "1s").Should(Succeed())
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: "test-service-gateway", Namespace: "default"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			params := &unstructured.Unstructured{}
+			params.SetAPIVersion("agentgateway.dev/v1alpha1")
+			params.SetKind("AgentgatewayParameters")
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Name: "test-service-gateway", Namespace: "default"}, params)
+			}, "10s", "1s").Should(Succeed())
+
+			serviceType, found, err := unstructured.NestedString(params.Object, "spec", "service", "spec", "type")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(serviceType).To(Equal("ClusterIP"))
+		})
 	})
 })

@@ -175,6 +175,15 @@ func setAgentgatewayParametersSpec(params *unstructured.Unstructured, toolGatewa
 	if err := unstructured.SetNestedMap(params.Object, deploymentSpec, "spec", "deployment", "spec"); err != nil {
 		return fmt.Errorf("failed to set spec.deployment.spec: %w", err)
 	}
+
+	// spec.service.spec.type → ClusterIP (override default LoadBalancer)
+	serviceSpec := map[string]interface{}{
+		"type": "ClusterIP",
+	}
+	if err := unstructured.SetNestedMap(params.Object, serviceSpec, "spec", "service", "spec"); err != nil {
+		return fmt.Errorf("failed to set spec.service.spec: %w", err)
+	}
+
 	return nil
 }
 
