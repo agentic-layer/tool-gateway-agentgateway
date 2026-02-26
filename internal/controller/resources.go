@@ -118,9 +118,26 @@ func newAgentgatewayParameters(name, namespace string) *unstructured.Unstructure
 // spec.env maps directly to AgentgatewayParameters.spec.env.
 // spec.envFrom is injected via AgentgatewayParameters.spec.deployment.spec using
 // strategic merge patch semantics — the "agentgateway" container entry is merged by name.
+//
+// OTEL environment variables (OTEL_EXPORTER_OTLP_*) are extracted from spec.env and
+// translated to agentgateway's rawConfig telemetry section, and are not passed as
+// environment variables to agentgateway.
 func setAgentgatewayParametersSpec(params *unstructured.Unstructured, toolGatewaySpec agentruntimev1alpha1.ToolGatewaySpec) error {
-	// spec.env
-	envVars, err := toUnstructuredSlice(toolGatewaySpec.Env)
+	// Extract OTEL env vars and filter them out from the env vars passed to agentgateway
+	otelConfig, filteredEnv := extractOTELEnvVars(toolGatewaySpec.Env)
+
+	// Build telemetry config from OTEL env vars
+	telemetryConfig := buildTelemetryConfig(otelConfig)
+
+	// Set rawConfig if telemetry config is present
+	if telemetryConfig != nil {
+		if err := unstructured.SetNestedMap(params.Object, telemetryConfig, "spec", "rawConfig"); err != nil {
+			return fmt.Errorf("failed to set spec.rawConfig: %w", err)
+		}
+	}
+
+	// spec.env (with OTEL vars filtered out)
+	envVars, err := toUnstructuredSlice(filteredEnv)
 	if err != nil {
 		return fmt.Errorf("failed to convert spec.env: %w", err)
 	}
