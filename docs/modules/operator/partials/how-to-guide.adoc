@@ -1,6 +1,6 @@
-= Install the Tool Gateway Operator for agentgateway
+= Install the Tool Gateway Operator for Agentgateway
 
-This guide walks you through installing the agentgateway Tool Gateway Operator on your Kubernetes cluster.
+This guide walks you through installing the Agentgateway Tool Gateway Operator on your Kubernetes cluster.
 
 == Dependencies
 
