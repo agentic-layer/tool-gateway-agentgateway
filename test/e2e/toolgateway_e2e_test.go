@@ -153,4 +153,18 @@ var _ = Describe("ToolGateway", func() {
 			}, 30*time.Second, 5*time.Second).Should(Succeed(), "test-gateway-config envFrom not found in agentgateway pod spec")
 		})
 	})
+
+	Describe("Service type", func() {
+		It("should create Service with type ClusterIP", func() {
+			By("verifying the gateway Service has type ClusterIP")
+			Eventually(func(g Gomega) {
+				output, err := utils.Run(exec.Command("kubectl", "get", "svc",
+					"-n", toolGateway.Namespace,
+					toolGateway.ServiceName,
+					"-o", "jsonpath={.spec.type}"))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(output)).To(Equal("ClusterIP"))
+			}, 30*time.Second, 5*time.Second).Should(Succeed(), "Service type is not ClusterIP")
+		})
+	})
 })
