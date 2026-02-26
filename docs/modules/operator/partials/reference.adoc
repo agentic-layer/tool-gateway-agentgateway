@@ -1,0 +1,157 @@
+= Tool Gateway Reference
+
+== Full API Reference
+
+https://pkg.go.dev/github.com/agentic-layer/agent-runtime-operator/api/v1alpha1
+
+== CRDs
+
+The following Custom Resource Definitions (CRDs) are provided by the Agent Runtime Operator:
+
+* *ToolGateway*: https://github.com/agentic-layer/agent-runtime-operator/blob/main/config/crd/bases/runtime.agentic-layer.ai_toolgateways.yaml
+
+* *ToolGatewayClass*: https://github.com/agentic-layer/agent-runtime-operator/blob/main/config/crd/bases/runtime.agentic-layer.ai_toolgatewaysclasses.yaml
+
+* *ToolServer*: https://github.com/agentic-layer/agent-runtime-operator/blob/main/config/crd/bases/runtime.agentic-layer.ai_toolservers.yaml
+
+== Configuration
+
+=== ToolGateway
+
+A `ToolGateway` resource creates an agentgateway-based gateway for routing to tool servers.
+
+[source,yaml]
+----
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: ToolGateway
+metadata:
+  name: my-tool-gateway
+  namespace: my-namespace
+spec:
+  toolGatewayClassName: agentgateway  # Optional: uses default if not specified
+  env:                                 # Optional: environment variables
+    - name: LOG_LEVEL
+      value: "info"
+  envFrom:                             # Optional: environment from ConfigMaps/Secrets
+    - configMapRef:
+        name: my-config
+----
+
+==== OpenTelemetry (OTEL) Configuration
+
+The operator automatically translates standard OpenTelemetry environment variables to agentgateway's telemetry configuration:
+
+[source,yaml]
+----
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: ToolGateway
+metadata:
+  name: my-tool-gateway
+  namespace: my-namespace
+spec:
+  toolGatewayClassName: agentgateway
+  env:
+    # OTEL configuration - automatically translated to agentgateway config
+    - name: OTEL_EXPORTER_OTLP_ENDPOINT
+      value: "http://otel-collector:4318"
+    - name: OTEL_EXPORTER_OTLP_PROTOCOL
+      value: "http/protobuf"
+    - name: OTEL_EXPORTER_OTLP_HEADERS
+      value: "api-key=secret123"
+----
+
+**Supported OTEL Environment Variables:**
+
+* `OTEL_EXPORTER_OTLP_ENDPOINT` - The OTLP exporter endpoint URL
+* `OTEL_EXPORTER_OTLP_PROTOCOL` - The protocol to use (grpc or http)
+* `OTEL_EXPORTER_OTLP_HEADERS` - Headers to send with telemetry data
+* Signal-specific overrides:
+** `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`
+** `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`
+** `OTEL_EXPORTER_OTLP_TRACES_HEADERS`
+** (Similar for METRICS and LOGS)
+
+The OTEL environment variables are translated to agentgateway's `rawConfig.telemetry` section and are **not** passed as environment variables to the agentgateway container.
+
+=== ToolGatewayClass
+
+A `ToolGatewayClass` defines which controller implementation to use for ToolGateways:
+
+[source,yaml]
+----
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: ToolGatewayClass
+metadata:
+  name: agentgateway
+  namespace: tool-gateway
+  annotations:
+    toolgatewayclass.kubernetes.io/is-default-class: "true"
+spec:
+  controller: runtime.agentic-layer.ai/tool-gateway-agentgateway-controller
+----
+
+=== ToolServer
+
+A `ToolServer` resource defines a tool server that the gateway will route to:
+
+[source,yaml]
+----
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: ToolServer
+metadata:
+  name: my-tool-server
+  namespace: my-namespace
+spec:
+  protocol: mcp                        # Protocol type (mcp)
+  transportType: http                  # Transport type (http)
+  image: my-tool-server:latest        # Container image
+  port: 8000                           # Container port
+  path: /mcp                           # Optional: path (default: /mcp)
+  replicas: 1                          # Number of replicas
+  env:                                 # Optional: environment variables
+    - name: CONFIG_VAR
+      value: "value"
+  args:                                # Optional: container arguments
+    - "--host"
+    - "0.0.0.0"
+  toolGatewayRef:                      # Reference to the ToolGateway
+    name: my-tool-gateway
+    namespace: tool-gateway
+----
+
+== Multiplex Routes
+
+The operator automatically creates multiplex MCP routes for aggregating multiple tool servers:
+
+* `/mcp` - Aggregates all ToolServers across all namespaces
+* `/<namespace>/mcp` - Aggregates all ToolServers in a specific namespace
+* `/<namespace>/<toolserver>/mcp` - Routes to an individual ToolServer
+
+== How it Works
+
+The Tool Gateway agentgateway Operator creates and manages Gateway API resources based on ToolGateway and ToolServer custom resources:
+
+. **Gateway Creation**: When a ToolGateway is created, the operator creates a dedicated Gateway with the same name in the same namespace as the ToolGateway with HTTP listener on port 80. Each ToolGateway has its own Gateway instance.
+
+. **ToolServer Integration**: For each ToolServer resource, the operator creates:
+** **AgentgatewayBackend**: Configures the MCP backend connection to the ToolServer
+** **HTTPRoute**: Routes traffic from the gateway to the AgentgatewayBackend using path-based matching
+
+. **Automatic Updates**: The operator watches for changes to ToolGateway and ToolServer resources and updates the corresponding Gateway API resources automatically.
+
+=== Architecture
+
+----
+ToolGateway (CRD)
+    |
+Gateway (same name and namespace)
+    |
+HTTPRoute (Gateway API) -> AgentgatewayBackend -> ToolServer
+----
+
+== Examples
+
+See complete examples in the repository:
+
+* https://github.com/agentic-layer/tool-gateway-agentgateway/blob/main/config/samples/toolgateway_v1alpha1_toolgateway_with_toolserver.yaml[Basic ToolGateway with ToolServers]
+* https://github.com/agentic-layer/tool-gateway-agentgateway/blob/main/config/samples/toolgateway_v1alpha1_otel_example.yaml[ToolGateway with OpenTelemetry configuration]

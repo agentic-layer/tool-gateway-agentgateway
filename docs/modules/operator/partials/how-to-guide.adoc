@@ -1,0 +1,142 @@
+= Install the Tool Gateway Operator for agentgateway
+
+This guide walks you through installing the agentgateway Tool Gateway Operator on your Kubernetes cluster.
+
+== Dependencies
+
+The operator requires the following dependencies:
+
+* **Kubernetes**: A running Kubernetes cluster (version 1.26.0 or higher)
+* **Agent Runtime Operator**: Includes the required CRDs for Tool Gateways. See xref:agent-runtime-operator:agent-runtime:how-to-guide.adoc[Install the Agent Runtime Operator] for installation instructions.
+
+== Installation
+
+=== Quick Start
+
+The fastest way to get started is to install all dependencies and the operator:
+
+[source,bash]
+----
+# Create local cluster (optional, if you don't have one)
+kind create cluster
+
+# Install required dependencies (cert-manager, Gateway API CRDs, agentgateway, agent-runtime)
+kubectl apply -f https://github.com/agentic-layer/agent-runtime-operator/releases/latest/download/install.yaml
+
+# Install Gateway API CRDs
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
+
+# Install cert-manager
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml
+kubectl wait --for=condition=Available --timeout=60s -n cert-manager deployment/cert-manager
+kubectl wait --for=condition=Available --timeout=60s -n cert-manager deployment/cert-manager-webhook
+kubectl wait --for=condition=Available --timeout=60s -n cert-manager deployment/cert-manager-cainjector
+
+# Install agentgateway CRDs and controller
+helm upgrade -i agentgateway-crds \
+  oci://ghcr.io/kgateway-dev/charts/agentgateway-crds \
+  --namespace agentgateway-system \
+  --create-namespace \
+  --version 0.5.0 \
+  --wait
+
+helm upgrade -i agentgateway \
+  oci://ghcr.io/kgateway-dev/charts/agentgateway \
+  --namespace agentgateway-system \
+  --version 0.5.0 \
+  --wait
+
+# Install the Tool Gateway operator
+kubectl apply -f https://github.com/agentic-layer/tool-gateway-agentgateway/releases/latest/download/install.yaml
+
+# Wait for the operator to be ready
+kubectl wait --for=condition=Available --timeout=60s -n tool-gateway-agentgateway-system deployment/tool-gateway-agentgateway-controller-manager
+----
+
+Find the latest version at https://github.com/agentic-layer/tool-gateway-agentgateway/releases/
+
+=== Install with Kubernetes YAML
+
+If you already have the dependencies installed, you can install just the operator:
+
+==== Install the Operator
+
+[source,bash]
+----
+# Install the operator
+kubectl apply -f https://github.com/agentic-layer/tool-gateway-agentgateway/releases/latest/download/install.yaml
+
+# Wait for the operator to be ready
+kubectl wait --for=condition=Available --timeout=60s -n tool-gateway-agentgateway-system deployment/tool-gateway-agentgateway-controller-manager
+----
+
+=== Install with Flux
+
+If you're using Flux for GitOps, you can install the operator using an OCI repository:
+
+[source,yaml]
+----
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: tool-gateway-agentgateway
+  namespace: flux-system
+spec:
+  interval: 5m
+  url: oci://ghcr.io/agentic-layer/manifests/tool-gateway-agentgateway
+  ref:
+    semver: ">= 0, < 1"
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: tool-gateway-agentgateway
+  namespace: flux-system
+spec:
+  sourceRef:
+    kind: OCIRepository
+    name: tool-gateway-agentgateway
+  interval: 10m
+  path: ./default
+  prune: true
+  wait: true
+  dependsOn:
+    # Ensure cert-manager is installed first (if you install it with Flux as well)
+    - name: cert-manager
+    # Ensure Agent Runtime Operator is installed
+    - name: agent-runtime-operator
+----
+
+== Verify the installation
+
+[source,bash]
+----
+# Check that the operator is running
+kubectl get pods -n tool-gateway-agentgateway-system
+----
+
+You should see the operator pod running.
+
+== Uninstallation
+
+To remove the operator and its dependencies:
+
+[source,bash]
+----
+# Uninstall the operator
+kubectl delete -f https://github.com/agentic-layer/tool-gateway-agentgateway/releases/latest/download/install.yaml
+
+# Uninstall dependencies (optional, if you want to remove everything)
+kubectl delete -f https://github.com/agentic-layer/agent-runtime-operator/releases/latest/download/install.yaml
+
+# Uninstall agentgateway
+helm uninstall agentgateway --namespace agentgateway-system
+helm uninstall agentgateway-crds --namespace agentgateway-system
+
+# Uninstall Gateway API CRDs
+kubectl delete -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
+
+# Uninstall cert-manager
+kubectl delete -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml
+kubectl delete namespace cert-manager
+----
