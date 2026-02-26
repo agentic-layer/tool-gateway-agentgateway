@@ -14,7 +14,7 @@ The operator requires the following infrastructure components to be installed fi
 
 * **https://cert-manager.io/[cert-manager]**: For certificate management (required for operator webhooks)
 * **https://gateway-api.sigs.k8s.io/[Gateway API CRDs]**: Standard Kubernetes Gateway API (required by agentgateway)
-* **https://www.kgateway.io/[agentgateway]**: Gateway implementation
+* **https://agentgateway.dev/[agentgateway]**: Gateway implementation
 * **xref:agent-runtime-operator:agent-runtime:how-to-guide.adoc[Agent Runtime Operator]**: Provides ToolGateway, ToolGatewayClass, and ToolServer CRDs
 
 === Install cert-manager
