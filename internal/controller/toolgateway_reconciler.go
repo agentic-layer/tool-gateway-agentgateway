@@ -367,7 +367,7 @@ func (r *ToolGatewayReconciler) ensureMultiplexBackend(ctx context.Context, tool
 		targets := make([]interface{}, 0, len(toolServers))
 		for _, ts := range toolServers {
 			targets = append(targets, buildMCPTarget(
-				fmt.Sprintf("%s-%s", ts.Namespace, ts.Name),
+				shortID(fmt.Sprintf("%s/%s", ts.Namespace, ts.Name)),
 				toolServerHost(ts.Name, ts.Namespace),
 				ts.Spec.Port,
 				ts.Spec.Path,

@@ -18,6 +18,7 @@ package controller
 
 import (
 	"fmt"
+	"hash/fnv"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -26,6 +27,15 @@ import (
 
 	agentruntimev1alpha1 "github.com/agentic-layer/agent-runtime-operator/api/v1alpha1"
 )
+
+// shortID returns a reproducible 3-character hex string derived from the input.
+// It is used to shorten MCP target names so that the resulting multiplexed tool
+// names (target_toolname) stay short.
+func shortID(name string) string {
+	h := fnv.New32a()
+	h.Write([]byte(name))
+	return fmt.Sprintf("%03x", h.Sum32()&0xFFF)
+}
 
 // newAgentgatewayBackend creates a new unstructured AgentgatewayBackend resource.
 func newAgentgatewayBackend(name, namespace string) *unstructured.Unstructured {

@@ -91,10 +91,10 @@ var _ = Describe("ToolGateway", func() {
 			Eventually(func(g Gomega) {
 				tools := utils.FetchTools(g, toolGateway, "/namespace-a/mcp")
 				g.Expect(tools).To(Equal([]string{
-					"namespace-a-server-a_echo",
-					"namespace-a-server-a_get_weather",
-					"namespace-a-server-b_echo",
-					"namespace-a-server-b_get_status",
+					"663_echo",
+					"663_get_status",
+					"7f6_echo",
+					"7f6_get_weather",
 				}))
 			}, 2*time.Minute, 5*time.Second).Should(Succeed(), "namespace-a aggregate tools did not match")
 
@@ -115,12 +115,12 @@ var _ = Describe("ToolGateway", func() {
 			Eventually(func(g Gomega) {
 				tools := utils.FetchTools(g, toolGateway, "/mcp")
 				g.Expect(tools).To(Equal([]string{
-					"namespace-a-server-a_echo",
-					"namespace-a-server-a_get_weather",
-					"namespace-a-server-b_echo",
-					"namespace-a-server-b_get_status",
-					"namespace-b-server-c_echo",
-					"namespace-b-server-c_get_info",
+					"663_echo",
+					"663_get_status",
+					"7f6_echo",
+					"7f6_get_weather",
+					"f63_echo",
+					"f63_get_info",
 				}))
 			}, 2*time.Minute, 5*time.Second).Should(Succeed(), "root aggregate tools did not match")
 		})
