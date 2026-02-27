@@ -5,9 +5,9 @@ This is an agentgateway based implementation of the Agentic Layer Tool Gateway.
 The Tool Gateway Agentgateway Operator is a specialized Kubernetes operator that provides an agentgateway-based Tool gateway implementation for the Agent Runtime Operator ecosystem.
 It manages `ToolGateway` resources and automatically generates agentgateway configurations to expose Tool workloads through a unified gateway interface.
 
-== How-To Guides
-
-Step-by-step guides to get you up and running:
-
+.How-To Guides
 * xref:operator:how-to-guide.adoc[]
 * xref:agent-runtime-operator:tool-gateways:how-to-guide.adoc[]
+
+.Reference
+* xref:operator:reference.adoc[]

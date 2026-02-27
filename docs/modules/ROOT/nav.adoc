@@ -1,6 +1,0 @@
-.How-To Guides
-* xref:operator:how-to-guide.adoc[]
-* xref:agent-runtime-operator:tool-gateways:how-to-guide.adoc[]
-
-.Reference
-* xref:operator:reference.adoc[]
