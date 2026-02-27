@@ -1,4 +1,4 @@
-= Tool Gateway Reference
+= Agentgateway-based Tool Gateway Reference
 
 == Full API Reference
 
