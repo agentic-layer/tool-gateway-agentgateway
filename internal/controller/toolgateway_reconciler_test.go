@@ -473,6 +473,153 @@ var _ = Describe("ToolGateway Controller", func() {
 			Expect(err).To(HaveOccurred())
 		})
 
+		It("should update AgentgatewayParameters when spec.env changes", func() {
+			toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-class-env-update"},
+				Spec:       agentruntimev1alpha1.ToolGatewayClassSpec{Controller: "runtime.agentic-layer.ai/tool-gateway-agentgateway-controller"},
+			}
+			Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
+
+			toolGateway := &agentruntimev1alpha1.ToolGateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-env-update-gateway", Namespace: "default"},
+				Spec: agentruntimev1alpha1.ToolGatewaySpec{
+					ToolGatewayClassName: "test-class-env-update",
+					Env: []corev1.EnvVar{
+						{Name: "MY_VAR", Value: "initial-value"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, toolGateway)).To(Succeed())
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Name: "test-env-update-gateway", Namespace: "default"}, &agentruntimev1alpha1.ToolGateway{})
+			}, "10s", "1s").Should(Succeed())
+
+			// First reconcile – creates AgentgatewayParameters with initial env var
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: "test-env-update-gateway", Namespace: "default"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			params := &unstructured.Unstructured{}
+			params.SetAPIVersion("agentgateway.dev/v1alpha1")
+			params.SetKind("AgentgatewayParameters")
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Name: "test-env-update-gateway", Namespace: "default"}, params)
+			}, "10s", "1s").Should(Succeed())
+
+			envVars, found, err := unstructured.NestedSlice(params.Object, "spec", "env")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(envVars).To(HaveLen(1))
+			Expect(envVars[0].(map[string]interface{})["value"]).To(Equal("initial-value"))
+
+			// Update the ToolGateway spec.env
+			tg := &agentruntimev1alpha1.ToolGateway{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "test-env-update-gateway", Namespace: "default"}, tg)).To(Succeed())
+			patch := client.MergeFrom(tg.DeepCopy())
+			tg.Spec.Env = []corev1.EnvVar{{Name: "MY_VAR", Value: "updated-value"}}
+			Expect(k8sClient.Patch(ctx, tg, patch)).To(Succeed())
+
+			// Wait for the cache to reflect the updated ToolGateway spec
+			Eventually(func() string {
+				updated := &agentruntimev1alpha1.ToolGateway{}
+				_ = k8sClient.Get(ctx, types.NamespacedName{Name: "test-env-update-gateway", Namespace: "default"}, updated)
+				if len(updated.Spec.Env) == 0 {
+					return ""
+				}
+				return updated.Spec.Env[0].Value
+			}, "10s", "1s").Should(Equal("updated-value"))
+
+			// Second reconcile – should update AgentgatewayParameters with new env var
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: "test-env-update-gateway", Namespace: "default"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			updatedParams := &unstructured.Unstructured{}
+			updatedParams.SetAPIVersion("agentgateway.dev/v1alpha1")
+			updatedParams.SetKind("AgentgatewayParameters")
+			Eventually(func() string {
+				_ = k8sClient.Get(ctx, types.NamespacedName{Name: "test-env-update-gateway", Namespace: "default"}, updatedParams)
+				vars, _, _ := unstructured.NestedSlice(updatedParams.Object, "spec", "env")
+				if len(vars) == 0 {
+					return ""
+				}
+				v, _ := vars[0].(map[string]interface{})["value"].(string)
+				return v
+			}, "10s", "1s").Should(Equal("updated-value"))
+		})
+
+		It("should clear spec.rawConfig in AgentgatewayParameters when OTEL env vars are removed", func() {
+			toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-class-otel-remove"},
+				Spec:       agentruntimev1alpha1.ToolGatewayClassSpec{Controller: "runtime.agentic-layer.ai/tool-gateway-agentgateway-controller"},
+			}
+			Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
+
+			toolGateway := &agentruntimev1alpha1.ToolGateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-otel-remove-gateway", Namespace: "default"},
+				Spec: agentruntimev1alpha1.ToolGatewaySpec{
+					ToolGatewayClassName: "test-class-otel-remove",
+					Env: []corev1.EnvVar{
+						{Name: "OTEL_EXPORTER_OTLP_ENDPOINT", Value: "http://otel-collector:4318"},
+						{Name: "MY_VAR", Value: "my-value"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, toolGateway)).To(Succeed())
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Name: "test-otel-remove-gateway", Namespace: "default"}, &agentruntimev1alpha1.ToolGateway{})
+			}, "10s", "1s").Should(Succeed())
+
+			// First reconcile – creates AgentgatewayParameters with OTEL config in rawConfig
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: "test-otel-remove-gateway", Namespace: "default"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			params := &unstructured.Unstructured{}
+			params.SetAPIVersion("agentgateway.dev/v1alpha1")
+			params.SetKind("AgentgatewayParameters")
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Name: "test-otel-remove-gateway", Namespace: "default"}, params)
+			}, "10s", "1s").Should(Succeed())
+
+			// Verify rawConfig is set
+			_, found, err := unstructured.NestedMap(params.Object, "spec", "rawConfig")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+
+			// Remove the OTEL env var from the ToolGateway spec
+			tg := &agentruntimev1alpha1.ToolGateway{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "test-otel-remove-gateway", Namespace: "default"}, tg)).To(Succeed())
+			patch := client.MergeFrom(tg.DeepCopy())
+			tg.Spec.Env = []corev1.EnvVar{{Name: "MY_VAR", Value: "my-value"}}
+			Expect(k8sClient.Patch(ctx, tg, patch)).To(Succeed())
+
+			// Wait for the cache to reflect the updated ToolGateway spec (only MY_VAR remains)
+			Eventually(func() int {
+				updated := &agentruntimev1alpha1.ToolGateway{}
+				_ = k8sClient.Get(ctx, types.NamespacedName{Name: "test-otel-remove-gateway", Namespace: "default"}, updated)
+				return len(updated.Spec.Env)
+			}, "10s", "1s").Should(Equal(1))
+
+			// Second reconcile – should clear spec.rawConfig since no OTEL env vars remain
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: "test-otel-remove-gateway", Namespace: "default"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			updatedParams := &unstructured.Unstructured{}
+			updatedParams.SetAPIVersion("agentgateway.dev/v1alpha1")
+			updatedParams.SetKind("AgentgatewayParameters")
+			Eventually(func() bool {
+				_ = k8sClient.Get(ctx, types.NamespacedName{Name: "test-otel-remove-gateway", Namespace: "default"}, updatedParams)
+				_, found, _ := unstructured.NestedMap(updatedParams.Object, "spec", "rawConfig")
+				return found
+			}, "10s", "1s").Should(BeFalse())
+		})
+
 		It("should set Service type to ClusterIP in AgentgatewayParameters", func() {
 			toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-class-service"},
