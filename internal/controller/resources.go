@@ -139,11 +139,13 @@ func setAgentgatewayParametersSpec(params *unstructured.Unstructured, toolGatewa
 	// Build telemetry config from OTEL env vars
 	telemetryConfig := buildTelemetryConfig(otelConfig)
 
-	// Set rawConfig if telemetry config is present
+	// Set rawConfig if telemetry config is present, otherwise clear it to remove stale OTEL config
 	if telemetryConfig != nil {
 		if err := unstructured.SetNestedMap(params.Object, telemetryConfig, "spec", "rawConfig"); err != nil {
 			return fmt.Errorf("failed to set spec.rawConfig: %w", err)
 		}
+	} else {
+		unstructured.RemoveNestedField(params.Object, "spec", "rawConfig")
 	}
 
 	// spec.env (with OTEL vars filtered out)
