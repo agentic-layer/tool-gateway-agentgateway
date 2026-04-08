@@ -61,9 +61,12 @@ func buildMCPTarget(name, host string, port int32, path string) map[string]inter
 }
 
 // setMCPTargets sets the MCP targets in the AgentgatewayBackend spec.
+// failureMode is set to "failOpen" so that healthy targets continue serving
+// when individual MCP targets fail to initialize or fail during fanout.
 func setMCPTargets(backend *unstructured.Unstructured, targets []interface{}) error {
 	return unstructured.SetNestedMap(backend.Object, map[string]interface{}{
-		"targets": targets,
+		"targets":     targets,
+		"failureMode": "FailOpen",
 	}, "spec", "mcp")
 }
 
