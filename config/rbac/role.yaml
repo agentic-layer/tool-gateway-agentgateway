@@ -42,6 +42,8 @@ rules:
 - apiGroups:
   - runtime.agentic-layer.ai
   resources:
+  - guardrailproviders
+  - guards
   - toolgatewayclasses
   - toolroutes
   - toolservers
