@@ -1,0 +1,94 @@
+# Guardrail Adapter (Envoy ext_proc) service for local and e2e testing.
+# Deploys the adapter in the "guardrails" namespace, exposed as
+# guardrail-adapter.guardrails:80 (port 80 forwards to container port 9001).
+# The operator defaults --guardrail-adapter-namespace to "guardrails", so no
+# additional flag is required.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: guardrails
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: guardrail-adapter
+  namespace: guardrails
+  labels:
+    app: guardrail-adapter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: guardrail-adapter
+  template:
+    metadata:
+      labels:
+        app: guardrail-adapter
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: guardrail-adapter
+          image: ghcr.io/agentic-layer/guardrail-adapter:0.1.0
+          args:
+            - --addr=:9001
+            - --health-addr=:8080
+          ports:
+            - name: ext-proc
+              containerPort: 9001
+            - name: health
+              containerPort: 8080
+          env:
+            - name: LOG_LEVEL
+              value: info
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: guardrail-adapter
+  namespace: guardrails
+spec:
+  selector:
+    app: guardrail-adapter
+  ports:
+    - name: ext-proc
+      port: 80
+      targetPort: 9001
+---
+# Allow AgentgatewayPolicy objects in the "default" namespace to reference
+# the guardrail-adapter Service in this namespace via ext_proc backendRef.
+# Required because Gateway API (and agentgateway) enforce ReferenceGrant
+# for cross-namespace backendRefs.
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-default-to-guardrail-adapter
+  namespace: guardrails
+spec:
+  from:
+    - group: agentgateway.dev
+      kind: AgentgatewayPolicy
+      namespace: default
+  to:
+    - group: ""
+      kind: Service
+      name: guardrail-adapter

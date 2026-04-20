@@ -1,0 +1,82 @@
+# ToolGateway deployment with guardrails using Presidio for PII detection.
+# Deployed together with Presidio and the guardrail-adapter via the sibling
+# kustomization.yaml in this folder.
+---
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: GuardrailProvider
+metadata:
+  name: presidio
+  namespace: default
+spec:
+  type: presidio-api
+  presidio:
+    baseUrl: http://presidio.guardrail-providers:80
+
+---
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: Guard
+metadata:
+  name: pii-guard
+  namespace: default
+spec:
+  mode:
+    - pre_call
+    - post_call
+  description: "Detects and masks PII in both requests and responses"
+  providerRef:
+    name: presidio
+  presidio:
+    language: "en"
+    scoreThresholds:
+      ALL: "0.5"
+      PERSON: "0.8"
+      EMAIL_ADDRESS: "0.7"
+    entityActions:
+      PERSON: "MASK"
+      EMAIL_ADDRESS: "MASK"
+      CREDIT_CARD: "BLOCK"
+      PHONE_NUMBER: "MASK"
+
+---
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: ToolGateway
+metadata:
+  name: test-tool-gateway
+  namespace: default
+spec:
+  toolGatewayClassName: agentgateway
+  guardrails:
+    - name: pii-guard
+
+---
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: ToolServer
+metadata:
+  name: echo-server
+  namespace: default
+spec:
+  protocol: mcp
+  transportType: http
+  image: ghcr.io/agentic-layer/echo-mcp-server:0.3.0
+  port: 8000
+  replicas: 1
+  env:
+    - name: ECHO_SERVER_NAME
+      value: "Echo Server"
+    - name: ECHO_TOOL_NAME
+      value: "echo"
+    - name: ECHO_TOOL_RESPONSE
+      value: "Echo response"
+---
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: ToolRoute
+metadata:
+  name: echo-server
+  namespace: default
+spec:
+  toolGatewayRef:
+    name: test-tool-gateway
+    namespace: default
+  upstream:
+    toolServerRef:
+      name: echo-server

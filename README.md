@@ -232,6 +232,90 @@ The reachable URL is written to `ToolRoute.status.url` and is what consumers rea
 - If `toolGatewayRef` is set, the explicit reference is used. The `namespace` field defaults to the ToolRoute's own namespace when omitted.
 - If `toolGatewayRef` is omitted, the operator selects a `ToolGateway` from the well-known `tool-gateway` namespace. If multiple exist there, the first one listed wins (a warning is logged). If none exists, the route's status is set to `NotReady` with reason `ToolRouteGatewayNotFound`; reconciliation retriggers automatically once a default `ToolGateway` is created in that namespace.
 
+### Guardrail Configuration
+
+The operator supports adding guardrails to your ToolGateway to filter sensitive information (PII, harmful content) from tool traffic. Guardrails are implemented via the [guardrail-adapter](https://github.com/agentic-layer/guardrail-adapter) using agentgateway's ext_proc support.
+
+#### Prerequisites
+
+1. **guardrail-adapter** must be deployed in your cluster
+2. Configure the operator to point at the adapter Service (defaults shown):
+   - `--guardrail-adapter-name=guardrail-adapter` (set to empty to disable guardrails)
+   - `--guardrail-adapter-namespace=guardrails` (empty means same namespace as the ToolGateway)
+   - `--guardrail-adapter-port=80`
+3. Deploy a **GuardrailProvider** (Presidio, OpenAI Moderation, or AWS Bedrock)
+
+#### Example: PII Detection with Presidio
+
+**Step 1: Deploy the GuardrailProvider**
+
+```yaml
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: GuardrailProvider
+metadata:
+  name: presidio-analyzer
+  namespace: default
+spec:
+  type: presidio-api
+  presidio:
+    baseUrl: http://presidio-analyzer.default.svc:8080
+```
+
+**Step 2: Create a Guard**
+
+```yaml
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: Guard
+metadata:
+  name: pii-guard
+  namespace: default
+spec:
+  mode:
+    - pre_call   # Filter requests
+    - post_call  # Filter responses
+  description: "Detects and masks PII in tool traffic"
+  providerRef:
+    name: presidio-analyzer
+  presidio:
+    language: "en"
+    scoreThresholds:
+      ALL: "0.5"              # Default threshold
+      PERSON: "0.8"           # Higher threshold for person names
+      EMAIL_ADDRESS: "0.7"
+    entityActions:
+      PERSON: "MASK"          # Replace with [PERSON]
+      EMAIL_ADDRESS: "MASK"   # Replace with [EMAIL_ADDRESS]
+      CREDIT_CARD: "BLOCK"    # Reject requests with credit cards
+      PHONE_NUMBER: "MASK"
+```
+
+**Step 3: Reference the Guard in Your ToolGateway**
+
+```yaml
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: ToolGateway
+metadata:
+  name: my-tool-gateway
+  namespace: default
+spec:
+  toolGatewayClassName: agentgateway
+  guardrails:
+    - name: pii-guard
+```
+
+The operator will automatically create an **AgentgatewayPolicy** with ext_proc configuration targeting the guardrail-adapter.
+
+#### Limitations
+
+- **Single Guard per ToolGateway**: Agentgateway currently supports only one ext_proc slot per target. If you specify multiple guards, the operator will set a `GuardrailsUnsupported` status condition.
+- **Adapter Required**: If you reference guardrails but the operator is started with an empty `--guardrail-adapter-name`, a status condition will indicate the issue.
+
+#### Failure Mode
+
+Guardrails use `FailClosed` mode by default: if the adapter is unavailable, traffic is **blocked** (safer for sensitive data). This differs from MCP backends which use `FailOpen` (availability over filtering).
+
+See `config/samples/guardrails/` for a complete example. Apply it with `kubectl apply -k config/samples/guardrails` to deploy Presidio, the guardrail-adapter, and a configured ToolGateway in one step.
+
 ### Accessing Your Tools
 
 Once deployed, tools are accessible via the ToolGateway's Gateway:
