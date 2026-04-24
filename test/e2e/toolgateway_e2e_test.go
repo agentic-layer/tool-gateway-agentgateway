@@ -167,4 +167,42 @@ var _ = Describe("ToolGateway", func() {
 			}, 30*time.Second, 5*time.Second).Should(Succeed(), "Service type is not ClusterIP")
 		})
 	})
+
+	Describe("per-route Gateway resources", func() {
+		It("creates an AgentgatewayBackend per ToolRoute targeting the backing ToolServer", func() {
+			By("verifying the AgentgatewayBackend exists for the server-a route")
+			Eventually(func(g Gomega) {
+				output, err := utils.Run(exec.Command("kubectl", "get", "agentgatewaybackends",
+					"-n", "namespace-a",
+					"test-tool-gateway-server-a",
+					"-o", "jsonpath={.spec.mcp.targets[0].static.host}"))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(output)).To(Equal("server-a.namespace-a.svc.cluster.local"))
+			}, 2*time.Minute, 5*time.Second).Should(Succeed())
+		})
+
+		It("creates an HTTPRoute per ToolRoute parented to the ToolGateway", func() {
+			By("verifying the HTTPRoute exists for the server-a route and is parented to the ToolGateway")
+			Eventually(func(g Gomega) {
+				output, err := utils.Run(exec.Command("kubectl", "get", "httproutes",
+					"-n", "namespace-a",
+					"test-tool-gateway-server-a",
+					"-o", "jsonpath={.spec.parentRefs[0].name}"))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(output)).To(Equal("test-tool-gateway"))
+			}, 2*time.Minute, 5*time.Second).Should(Succeed())
+		})
+
+		It("populates ToolRoute.status.url with the gateway-local URL", func() {
+			By("verifying status.url ends with /namespace-a/server-a/mcp")
+			Eventually(func(g Gomega) {
+				output, err := utils.Run(exec.Command("kubectl", "get", "toolroute",
+					"-n", "namespace-a",
+					"server-a",
+					"-o", "jsonpath={.status.url}"))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(output)).To(HaveSuffix("/namespace-a/server-a/mcp"))
+			}, 2*time.Minute, 5*time.Second).Should(Succeed())
+		})
+	})
 })

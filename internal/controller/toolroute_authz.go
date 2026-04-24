@@ -15,7 +15,7 @@ limitations under the License.
 */
 
 // Package-local tool-filter translation: our CRD expresses filtering as glob allow/deny.
-// agentgateway expresses it as CEL rules in AgentgatewayPolicy.spec.backend.mcpAuthorization.rules.
+// agentgateway expresses it as CEL rules in AgentgatewayPolicy.spec.backend.mcp.authorization.policy.matchExpressions.
 // This file builds those CEL rules.
 package controller
 
@@ -82,7 +82,7 @@ func orJoin(preds []string) string {
 }
 
 // buildMcpAuthorizationRules converts a ToolFilter into the list of CEL rules to write
-// into AgentgatewayPolicy.spec.backend.mcpAuthorization.rules.
+// into AgentgatewayPolicy.spec.backend.mcp.authorization.policy.matchExpressions.
 // Returns nil when filter is nil or when allow and deny are both empty.
 func buildMcpAuthorizationRules(filter *agentruntimev1alpha1.ToolFilter) []string {
 	if filter == nil || (len(filter.Allow) == 0 && len(filter.Deny) == 0) {

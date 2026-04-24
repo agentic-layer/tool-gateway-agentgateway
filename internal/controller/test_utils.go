@@ -68,7 +68,7 @@ func cleanupTestResources(ctx context.Context, k8sClient client.Client, namespac
 	agentgatewayParamsList := &unstructured.UnstructuredList{}
 	agentgatewayParamsList.SetAPIVersion("agentgateway.dev/v1alpha1")
 	agentgatewayParamsList.SetKind("AgentgatewayParametersList")
-	_ = k8sClient.List(ctx, agentgatewayParamsList, &client.ListOptions{Namespace: namespace})
+	gomega.Expect(k8sClient.List(ctx, agentgatewayParamsList, &client.ListOptions{Namespace: namespace})).To(gomega.Succeed())
 	for i := range agentgatewayParamsList.Items {
 		_ = k8sClient.Delete(ctx, &agentgatewayParamsList.Items[i])
 	}
@@ -77,7 +77,7 @@ func cleanupTestResources(ctx context.Context, k8sClient client.Client, namespac
 	agentgatewayBackendList := &unstructured.UnstructuredList{}
 	agentgatewayBackendList.SetAPIVersion("agentgateway.dev/v1alpha1")
 	agentgatewayBackendList.SetKind("AgentgatewayBackendList")
-	_ = k8sClient.List(ctx, agentgatewayBackendList, &client.ListOptions{Namespace: namespace})
+	gomega.Expect(k8sClient.List(ctx, agentgatewayBackendList, &client.ListOptions{Namespace: namespace})).To(gomega.Succeed())
 	for i := range agentgatewayBackendList.Items {
 		_ = k8sClient.Delete(ctx, &agentgatewayBackendList.Items[i])
 	}
@@ -86,7 +86,7 @@ func cleanupTestResources(ctx context.Context, k8sClient client.Client, namespac
 	agentgatewayPolicyList := &unstructured.UnstructuredList{}
 	agentgatewayPolicyList.SetAPIVersion("agentgateway.dev/v1alpha1")
 	agentgatewayPolicyList.SetKind("AgentgatewayPolicyList")
-	_ = k8sClient.List(ctx, agentgatewayPolicyList, &client.ListOptions{Namespace: namespace})
+	gomega.Expect(k8sClient.List(ctx, agentgatewayPolicyList, &client.ListOptions{Namespace: namespace})).To(gomega.Succeed())
 	for i := range agentgatewayPolicyList.Items {
 		_ = k8sClient.Delete(ctx, &agentgatewayPolicyList.Items[i])
 	}

@@ -116,7 +116,8 @@ func (r *ToolRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 }
 
 // shouldProcess returns true when the referenced ToolGateway is owned by this controller.
-// Mirrors ToolGatewayReconciler.shouldProcessToolGateway semantics.
+// Matches ToolGatewayReconciler.shouldProcessToolGateway: explicit className must match an owned class,
+// otherwise defaults to checking for an owned default class.
 func (r *ToolRouteReconciler) shouldProcess(ctx context.Context, tg *agentruntimev1alpha1.ToolGateway) bool {
 	log := logf.FromContext(ctx)
 
@@ -176,7 +177,16 @@ func (r *ToolRouteReconciler) resolveUpstream(ctx context.Context, route *agentr
 		if e != nil {
 			return "", 0, "", fmt.Errorf("invalid external.url: %w", e)
 		}
+		// Validate scheme
+		if u.Scheme != "http" && u.Scheme != "https" {
+			return "", 0, "", fmt.Errorf("invalid external.url scheme %q: must be http or https", u.Scheme)
+		}
+		// Validate hostname
 		h := u.Hostname()
+		if h == "" {
+			return "", 0, "", fmt.Errorf("invalid external.url: hostname is empty")
+		}
+		// Parse and validate port
 		portStr := u.Port()
 		var p int32
 		if portStr == "" {
@@ -189,6 +199,9 @@ func (r *ToolRouteReconciler) resolveUpstream(ctx context.Context, route *agentr
 			n, convErr := strconv.Atoi(portStr)
 			if convErr != nil {
 				return "", 0, "", fmt.Errorf("invalid external.url port: %w", convErr)
+			}
+			if n < 1 || n > 65535 {
+				return "", 0, "", fmt.Errorf("invalid external.url port %d: must be in range 1-65535", n)
 			}
 			p = int32(n)
 		}

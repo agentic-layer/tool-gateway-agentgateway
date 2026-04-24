@@ -150,6 +150,8 @@ func (r *ToolGatewayReconciler) shouldProcessToolGateway(ctx context.Context, to
 				return true
 			}
 		}
+		// Explicit className that isn't owned by this controller
+		return false
 	}
 
 	// Look for ToolGatewayClass with default annotation among filtered classes
@@ -336,8 +338,8 @@ func (r *ToolGatewayReconciler) getToolServersForGateway(ctx context.Context, to
 		return nil, fmt.Errorf("failed to list ToolRoutes: %w", err)
 	}
 
-	var result []agentruntimev1alpha1.ToolServer
-	seen := map[string]bool{}
+	// Collect unique ToolServer references
+	tsRefs := map[string]types.NamespacedName{}
 	for _, tr := range toolRouteList.Items {
 		gwNs := tr.Spec.ToolGatewayRef.Namespace
 		if gwNs == "" {
@@ -354,19 +356,40 @@ func (r *ToolGatewayReconciler) getToolServersForGateway(ctx context.Context, to
 			tsNs = tr.Namespace
 		}
 		key := tsNs + "/" + tr.Spec.Upstream.ToolServerRef.Name
-		if seen[key] {
-			continue
+		tsRefs[key] = types.NamespacedName{
+			Name:      tr.Spec.Upstream.ToolServerRef.Name,
+			Namespace: tsNs,
 		}
-		seen[key] = true
+	}
 
-		var ts agentruntimev1alpha1.ToolServer
-		if err := r.Get(ctx, types.NamespacedName{Name: tr.Spec.Upstream.ToolServerRef.Name, Namespace: tsNs}, &ts); err != nil {
-			if apierrors.IsNotFound(err) {
-				continue
-			}
-			return nil, fmt.Errorf("failed to get ToolServer %s/%s: %w", tsNs, tr.Spec.Upstream.ToolServerRef.Name, err)
+	// Batch list all ToolServers in referenced namespaces
+	nsByNs := map[string]bool{}
+	for _, ref := range tsRefs {
+		nsByNs[ref.Namespace] = true
+	}
+
+	allToolServers := map[string]agentruntimev1alpha1.ToolServer{}
+	for ns := range nsByNs {
+		var tsList agentruntimev1alpha1.ToolServerList
+		if err := r.List(ctx, &tsList, &client.ListOptions{Namespace: ns}); err != nil {
+			return nil, fmt.Errorf("failed to list ToolServers in namespace %s: %w", ns, err)
 		}
-		result = append(result, ts)
+		for _, ts := range tsList.Items {
+			key := ts.Namespace + "/" + ts.Name
+			allToolServers[key] = ts
+		}
+	}
+
+	// Build result from cached servers
+	var result []agentruntimev1alpha1.ToolServer
+	for key, ref := range tsRefs {
+		if ts, found := allToolServers[key]; found {
+			result = append(result, ts)
+		} else {
+			// ToolServer not found - could be deleted or not yet created
+			// Log but don't fail the entire reconciliation
+			logf.Log.Info("ToolServer not found", "name", ref.Name, "namespace", ref.Namespace)
+		}
 	}
 
 	return result, nil
@@ -484,6 +507,10 @@ func (r *ToolGatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&agentruntimev1alpha1.ToolRoute{},
 			handler.EnqueueRequestsFromMapFunc(r.findToolGatewayForToolRoute),
 		).
+		Watches(
+			&agentruntimev1alpha1.ToolServer{},
+			handler.EnqueueRequestsFromMapFunc(r.findToolGatewaysForToolServer),
+		).
 		Named(ToolGatewayAgentgatewayControllerName).
 		Complete(r)
 }
@@ -506,4 +533,48 @@ func (r *ToolGatewayReconciler) findToolGatewayForToolRoute(_ context.Context, o
 			},
 		},
 	}
+}
+
+// findToolGatewaysForToolServer maps a ToolServer to all ToolGateways that reference it via ToolRoutes.
+// This ensures multiplex backends/routes are updated when a ToolServer's port/path changes.
+func (r *ToolGatewayReconciler) findToolGatewaysForToolServer(ctx context.Context, obj client.Object) []ctrl.Request {
+	toolServer, ok := obj.(*agentruntimev1alpha1.ToolServer)
+	if !ok {
+		return nil
+	}
+
+	// List all ToolRoutes that reference this ToolServer
+	var toolRouteList agentruntimev1alpha1.ToolRouteList
+	if err := r.List(ctx, &toolRouteList); err != nil {
+		return nil
+	}
+
+	// Find unique ToolGateways referenced by those ToolRoutes
+	gateways := map[client.ObjectKey]bool{}
+	for _, tr := range toolRouteList.Items {
+		if tr.Spec.Upstream.ToolServerRef == nil {
+			continue
+		}
+		tsNs := tr.Spec.Upstream.ToolServerRef.Namespace
+		if tsNs == "" {
+			tsNs = tr.Namespace
+		}
+		if tr.Spec.Upstream.ToolServerRef.Name != toolServer.Name || tsNs != toolServer.Namespace {
+			continue
+		}
+		gwNs := tr.Spec.ToolGatewayRef.Namespace
+		if gwNs == "" {
+			gwNs = tr.Namespace
+		}
+		gateways[client.ObjectKey{
+			Name:      tr.Spec.ToolGatewayRef.Name,
+			Namespace: gwNs,
+		}] = true
+	}
+
+	var requests []ctrl.Request
+	for key := range gateways {
+		requests = append(requests, ctrl.Request{NamespacedName: key})
+	}
+	return requests
 }
