@@ -462,6 +462,8 @@ func (r *ToolRouteReconciler) emitNormalEvent(regarding runtime.Object, reason, 
 // SetupWithManager sets up the controller with the Manager. Watching
 // ToolGateway ensures a ToolRoute that was blocked on a missing gateway is
 // re-reconciled once that gateway appears, without requiring periodic requeue.
+// Watching ToolServer ensures ToolRoutes are reconciled when their referenced
+// ToolServer's port/path changes, keeping AgentgatewayBackends up to date.
 func (r *ToolRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&agentruntimev1alpha1.ToolRoute{}).
@@ -469,6 +471,10 @@ func (r *ToolRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(
 			&agentruntimev1alpha1.ToolGateway{},
 			handler.EnqueueRequestsFromMapFunc(r.findToolRoutesForToolGateway),
+		).
+		Watches(
+			&agentruntimev1alpha1.ToolServer{},
+			handler.EnqueueRequestsFromMapFunc(r.findToolRoutesForToolServer),
 		).
 		Named(ToolRouteAgentgatewayControllerName).
 		Complete(r)
@@ -496,6 +502,39 @@ func (r *ToolRouteReconciler) findToolRoutesForToolGateway(ctx context.Context, 
 			gwNs = route.Namespace
 		}
 		if route.Spec.ToolGatewayRef.Name == tg.Name && gwNs == tg.Namespace {
+			requests = append(requests, ctrl.Request{
+				NamespacedName: types.NamespacedName{Name: route.Name, Namespace: route.Namespace},
+			})
+		}
+	}
+	return requests
+}
+
+// findToolRoutesForToolServer enqueues every ToolRoute that references the
+// changed ToolServer. Ensures ToolRoute backends are updated when a ToolServer's
+// port or path changes.
+func (r *ToolRouteReconciler) findToolRoutesForToolServer(ctx context.Context, obj client.Object) []ctrl.Request {
+	ts, ok := obj.(*agentruntimev1alpha1.ToolServer)
+	if !ok {
+		return nil
+	}
+
+	var routes agentruntimev1alpha1.ToolRouteList
+	if err := r.List(ctx, &routes); err != nil {
+		logf.FromContext(ctx).Error(err, "Failed to list ToolRoutes for ToolServer watch")
+		return nil
+	}
+
+	var requests []ctrl.Request
+	for _, route := range routes.Items {
+		if route.Spec.Upstream.ToolServerRef == nil {
+			continue
+		}
+		tsNs := route.Spec.Upstream.ToolServerRef.Namespace
+		if tsNs == "" {
+			tsNs = route.Namespace
+		}
+		if route.Spec.Upstream.ToolServerRef.Name == ts.Name && tsNs == ts.Namespace {
 			requests = append(requests, ctrl.Request{
 				NamespacedName: types.NamespacedName{Name: route.Name, Namespace: route.Namespace},
 			})

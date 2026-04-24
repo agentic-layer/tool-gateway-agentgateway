@@ -96,9 +96,14 @@ func (r *ToolGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		"toolGatewayClass", toolGateway.Spec.ToolGatewayClassName)
 
 	// Check if this controller should process this ToolGateway. When ownership
-	// cannot be determined (API error), requeue so another controller/user
-	// can observe a proper condition rather than silently dropping the object.
-	if !r.shouldProcessToolGateway(ctx, &toolGateway) {
+	// cannot be determined (API error), return the error so the reconcile is
+	// requeued and the object isn't silently dropped.
+	shouldProcess, err := r.shouldProcessToolGateway(ctx, &toolGateway)
+	if err != nil {
+		log.Error(err, "Failed to determine controller ownership")
+		return ctrl.Result{}, err
+	}
+	if !shouldProcess {
 		log.Info("Controller is not responsible for this ToolGateway, skipping reconciliation")
 		return ctrl.Result{}, nil
 	}
@@ -140,15 +145,17 @@ func (r *ToolGatewayReconciler) reconcileToolGateway(ctx context.Context, toolGa
 	return "", nil
 }
 
-// shouldProcessToolGateway determines if this controller is responsible for the given ToolGateway
-func (r *ToolGatewayReconciler) shouldProcessToolGateway(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway) bool {
+// shouldProcessToolGateway determines if this controller is responsible for the given ToolGateway.
+// Returns (false, nil) when another controller owns it, (true, nil) when this controller owns it,
+// and (false, error) when ownership cannot be determined due to API errors.
+func (r *ToolGatewayReconciler) shouldProcessToolGateway(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway) (bool, error) {
 	log := logf.FromContext(ctx)
 
 	// List all ToolGatewayClasses
 	var toolGatewayClassList agentruntimev1alpha1.ToolGatewayClassList
 	if err := r.List(ctx, &toolGatewayClassList); err != nil {
 		log.Error(err, "Failed to list ToolGatewayClasses")
-		return false
+		return false, fmt.Errorf("failed to list ToolGatewayClasses: %w", err)
 	}
 
 	// Filter to only classes managed by this controller
@@ -164,19 +171,21 @@ func (r *ToolGatewayReconciler) shouldProcessToolGateway(ctx context.Context, to
 	if toolGatewayClassName != "" {
 		for _, agc := range agentgatewayClasses {
 			if agc.Name == toolGatewayClassName {
-				return true
+				return true, nil
 			}
 		}
+		// Explicit className that isn't owned by this controller
+		return false, nil
 	}
 
 	// Look for ToolGatewayClass with default annotation among filtered classes
 	for _, agc := range agentgatewayClasses {
 		if agc.Annotations["toolgatewayclass.kubernetes.io/is-default-class"] == "true" {
-			return true
+			return true, nil
 		}
 	}
 
-	return false
+	return false, nil
 }
 
 // ensureGateway creates or updates the Gateway for this ToolGateway
@@ -529,6 +538,10 @@ func (r *ToolGatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&agentruntimev1alpha1.ToolRoute{},
 			handler.EnqueueRequestsFromMapFunc(r.findToolGatewayForToolRoute),
 		).
+		Watches(
+			&agentruntimev1alpha1.ToolServer{},
+			handler.EnqueueRequestsFromMapFunc(r.findToolGatewaysForToolServer),
+		).
 		Named(ToolGatewayAgentgatewayControllerName).
 		Complete(r)
 }
@@ -551,4 +564,48 @@ func (r *ToolGatewayReconciler) findToolGatewayForToolRoute(_ context.Context, o
 			},
 		},
 	}
+}
+
+// findToolGatewaysForToolServer maps a ToolServer to all ToolGateways that reference it via ToolRoutes.
+// This ensures multiplex backends/routes are updated when a ToolServer's port/path changes.
+func (r *ToolGatewayReconciler) findToolGatewaysForToolServer(ctx context.Context, obj client.Object) []ctrl.Request {
+	toolServer, ok := obj.(*agentruntimev1alpha1.ToolServer)
+	if !ok {
+		return nil
+	}
+
+	// List all ToolRoutes that reference this ToolServer
+	var toolRouteList agentruntimev1alpha1.ToolRouteList
+	if err := r.List(ctx, &toolRouteList); err != nil {
+		return nil
+	}
+
+	// Find unique ToolGateways referenced by those ToolRoutes
+	gateways := map[client.ObjectKey]bool{}
+	for _, tr := range toolRouteList.Items {
+		if tr.Spec.Upstream.ToolServerRef == nil {
+			continue
+		}
+		tsNs := tr.Spec.Upstream.ToolServerRef.Namespace
+		if tsNs == "" {
+			tsNs = tr.Namespace
+		}
+		if tr.Spec.Upstream.ToolServerRef.Name != toolServer.Name || tsNs != toolServer.Namespace {
+			continue
+		}
+		gwNs := tr.Spec.ToolGatewayRef.Namespace
+		if gwNs == "" {
+			gwNs = tr.Namespace
+		}
+		gateways[client.ObjectKey{
+			Name:      tr.Spec.ToolGatewayRef.Name,
+			Namespace: gwNs,
+		}] = true
+	}
+
+	var requests []ctrl.Request
+	for key := range gateways {
+		requests = append(requests, ctrl.Request{NamespacedName: key})
+	}
+	return requests
 }
