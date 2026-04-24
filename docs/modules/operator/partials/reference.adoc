@@ -12,6 +12,8 @@ The following Custom Resource Definitions (CRDs) are provided by the Agent Runti
 
 * *ToolGatewayClass*: https://github.com/agentic-layer/agent-runtime-operator/blob/main/config/crd/bases/runtime.agentic-layer.ai_toolgatewayclasses.yaml
 
+* *ToolRoute*: https://github.com/agentic-layer/agent-runtime-operator/blob/main/config/crd/bases/runtime.agentic-layer.ai_toolroutes.yaml
+
 * *ToolServer*: https://github.com/agentic-layer/agent-runtime-operator/blob/main/config/crd/bases/runtime.agentic-layer.ai_toolservers.yaml
 
 == Configuration
@@ -93,7 +95,7 @@ spec:
 
 === ToolServer
 
-A `ToolServer` resource defines a tool server that the gateway will route to:
+A `ToolServer` resource describes an MCP server deployment. A `ToolServer` only defines *what runs*; to actually expose it through a `ToolGateway` you must create a `ToolRoute`.
 
 [source,yaml]
 ----
@@ -105,7 +107,7 @@ metadata:
 spec:
   protocol: mcp                        # Protocol type (mcp)
   transportType: http                  # Transport type (http)
-  image: my-tool-server:latest        # Container image
+  image: my-tool-server:latest         # Container image
   port: 8000                           # Container port
   path: /mcp                           # Optional: path (default: /mcp)
   replicas: 1                          # Number of replicas
@@ -115,30 +117,83 @@ spec:
   args:                                # Optional: container arguments
     - "--host"
     - "0.0.0.0"
+----
+
+=== ToolRoute
+
+A `ToolRoute` exposes a single upstream (either a cluster `ToolServer` or an external URL) through a `ToolGateway`. Create one `ToolRoute` per exposure.
+
+[source,yaml]
+----
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: ToolRoute
+metadata:
+  name: my-tool-route
+  namespace: my-namespace
+spec:
   toolGatewayRef:                      # Reference to the ToolGateway
     name: my-tool-gateway
-    namespace: tool-gateway
+    namespace: tool-gateway            # Optional: defaults to the ToolRoute's namespace
+  upstream:                            # Exactly one of toolServerRef or external must be set
+    toolServerRef:
+      name: my-tool-server
+    # OR:
+    # external:
+    #   url: https://github-mcp.example.com/mcp
+  toolFilter:                          # Optional: restrict which tools are visible
+    allow: ["get_*", "list_*"]
+    deny: ["*delete*"]
 ----
+
+For each `ToolRoute`, the operator creates:
+
+* An **AgentgatewayBackend** configured with the resolved upstream (ToolServer service or external URL).
+* An **HTTPRoute** matching `/<route-namespace>/<route-name>/mcp` on the referenced `ToolGateway`.
+* An **AgentgatewayPolicy** attached to the route with MCP `authorization` CEL rules — only when `spec.toolFilter` is set.
+
+The reachable URL is published to `ToolRoute.status.url` and is the value consumers should read.
+
+==== Upstream Resolution
+
+The `spec.upstream` field must specify exactly one of:
+
+* `toolServerRef` — references a `ToolServer` by `name` (and optional `namespace`) in the cluster. The operator resolves the service URL from the `ToolServer`'s port and path.
+* `external.url` — a fully qualified URL to an MCP server outside the cluster. The URL scheme must be `http` or `https`, and must include a valid hostname and (if present) a port in the range 1–65535.
+
+==== Tool Filtering
+
+When `spec.toolFilter` is set, the operator translates the glob allow/deny patterns into CEL rules on an `AgentgatewayPolicy` attached to the route's `HTTPRoute`. The rules are written to the policy's `spec.backend.mcp.authorization.policy.matchExpressions` field.
+
+Semantics:
+
+* If `toolFilter` is `nil`, **all tools pass through unfiltered** (no policy is created).
+* If only `allow` is set, only matching tools are exposed.
+* If only `deny` is set, all tools are exposed except those matching.
+* If both are set, **deny wins on conflict** — a tool matching any `deny` pattern is always blocked, even if it also matches an `allow` pattern.
+* Patterns use standard glob syntax (`*` matches any substring, `?` matches a single character).
 
 == Multiplex Routes
 
-The operator automatically creates multiplex MCP routes for aggregating multiple tool servers:
+In addition to per-`ToolRoute` paths, the operator creates multiplex MCP routes on each `ToolGateway` that aggregate every `ToolServer` exposed via a `ToolRoute`:
 
-* `/mcp` - Aggregates all ToolServers across all namespaces
-* `/<namespace>/mcp` - Aggregates all ToolServers in a specific namespace
-* `/<namespace>/<toolserver>/mcp` - Routes to an individual ToolServer
+* `/mcp` — aggregates all `ToolServer`s (across all namespaces) that are exposed through this gateway via a `ToolRoute`.
+* `/<namespace>/mcp` — aggregates all exposed `ToolServer`s in a specific namespace.
+* `/<route-namespace>/<route-name>/mcp` — the per-`ToolRoute` path that routes to a single upstream.
 
 == How it Works
 
-The Tool Gateway agentgateway Operator creates and manages Gateway API resources based on ToolGateway and ToolServer custom resources:
+The Tool Gateway agentgateway Operator creates and manages Gateway API resources based on `ToolGateway`, `ToolRoute`, and `ToolServer` custom resources:
 
-. **Gateway Creation**: When a ToolGateway is created, the operator creates a dedicated Gateway with the same name in the same namespace as the ToolGateway with HTTP listener on port 80. Each ToolGateway has its own Gateway instance.
+. **Gateway creation**: When a `ToolGateway` is created, the operator creates a dedicated `Gateway` with the same name in the same namespace as the `ToolGateway`, with an HTTP listener on port 80. Each `ToolGateway` has its own `Gateway` instance. The operator also owns the `AgentgatewayParameters` (env/envFrom/telemetry translation) and the multiplex `HTTPRoute`s (`/mcp` and `/<ns>/mcp`).
 
-. **ToolServer Integration**: For each ToolServer resource, the operator creates:
-** **AgentgatewayBackend**: Configures the MCP backend connection to the ToolServer
-** **HTTPRoute**: Routes traffic from the gateway to the AgentgatewayBackend using path-based matching
+. **ToolRoute integration**: For each `ToolRoute` resource, the operator creates:
+** **AgentgatewayBackend** — configures the MCP backend connection to the route's upstream (a cluster `ToolServer` service or an external URL).
+** **HTTPRoute** — routes traffic from the referenced `ToolGateway` to the `AgentgatewayBackend` at the path `/<toolroute-namespace>/<toolroute-name>/mcp`. The reachable URL is surfaced as `ToolRoute.status.url`.
+** **AgentgatewayPolicy** (optional) — when `spec.toolFilter` is set, an `AgentgatewayPolicy` is attached to the route's `HTTPRoute` carrying MCP authorization CEL rules translated from the glob allow/deny patterns.
 
-. **Automatic Updates**: The operator watches for changes to ToolGateway and ToolServer resources and updates the corresponding Gateway API resources automatically.
+. **ToolServer**: Describes how an MCP server is deployed. It is consumed by `ToolRoute.spec.upstream.toolServerRef`; exposure through a gateway is always driven by a `ToolRoute`.
+
+. **Automatic updates**: The operator watches `ToolGateway`, `ToolRoute`, and `ToolServer` resources and updates the corresponding Gateway API resources automatically. Changes to a `ToolServer`'s port or path propagate to the backends of any `ToolRoute` that references it, and to the multiplex routes of the owning `ToolGateway`.
 
 === Architecture
 
@@ -146,13 +201,17 @@ The Tool Gateway agentgateway Operator creates and manages Gateway API resources
 ToolGateway (CRD)
     |
 Gateway (same name and namespace)
+
+ToolRoute (CRD)
     |
-HTTPRoute (Gateway API) -> AgentgatewayBackend -> ToolServer
+HTTPRoute (Gateway API) --> AgentgatewayBackend --> upstream (ToolServer or external URL)
+    |
+AgentgatewayPolicy (optional, when toolFilter is set)
 ----
 
 == Examples
 
 See complete examples in the repository:
 
-* https://github.com/agentic-layer/tool-gateway-agentgateway/blob/main/config/samples/toolgateway_v1alpha1_toolgateway_with_toolserver.yaml[Basic ToolGateway with ToolServers]
+* https://github.com/agentic-layer/tool-gateway-agentgateway/blob/main/config/samples/toolgateway_v1alpha1_toolgateway_with_toolserver.yaml[Basic ToolGateway with ToolServers and ToolRoutes]
 * https://github.com/agentic-layer/tool-gateway-agentgateway/blob/main/config/samples/toolgateway_v1alpha1_otel_example.yaml[ToolGateway with OpenTelemetry configuration]
