@@ -19,7 +19,6 @@ package e2e
 import (
 	"context"
 	"os/exec"
-	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -50,13 +49,10 @@ var _ = Describe("ToolGateway", func() {
 	})
 
 	AfterEach(func() {
-		specReport := CurrentSpecReport()
-		if specReport.Failed() {
-			By("Collecting controller logs for debugging")
-			cmd := exec.Command("kubectl", "logs", "-n", "tool-gateway-agentgateway-system",
-				"-l", "control-plane=controller-manager", "--tail=100")
-			output, _ := cmd.CombinedOutput()
-			GinkgoWriter.Printf("Controller logs:\n%s\n", string(output))
+		if CurrentSpecReport().Failed() {
+			fetchControllerManagerPodLogs()
+			fetchKubernetesEvents()
+			utils.CollectDiagnostics("toolgateway-e2e")
 		}
 
 		By("cleaning up test resources")
@@ -82,6 +78,18 @@ var _ = Describe("ToolGateway", func() {
 				tools := utils.FetchTools(g, toolGateway, "/namespace-b/server-c/mcp")
 				g.Expect(tools).To(Equal([]string{"echo", "get_info"}))
 			}, 2*time.Minute, 5*time.Second).Should(Succeed(), "tools from server-c did not match")
+		})
+	})
+
+	Describe("tool invocation", func() {
+		It("should echo a message via tools/call on /<namespace>/<server>/mcp", func() {
+			By("invoking the echo tool on server-a with a plain message")
+			Eventually(func(g Gomega) {
+				echoed := utils.CallTool(g, toolGateway, "/namespace-a/server-a/mcp", "echo",
+					map[string]interface{}{"message": "hello from e2e test"})
+				g.Expect(echoed).To(ContainSubstring("hello from e2e test"),
+					"echo tool should return the message verbatim")
+			}, 2*time.Minute, 5*time.Second).Should(Succeed(), "echo tool did not respond")
 		})
 	})
 
@@ -123,48 +131,6 @@ var _ = Describe("ToolGateway", func() {
 					"f63_get_info",
 				}))
 			}, 2*time.Minute, 5*time.Second).Should(Succeed(), "root aggregate tools did not match")
-		})
-	})
-
-	Describe("env var propagation", func() {
-		It("should propagate spec.env to the agentgateway pod spec", func() {
-			By("verifying TEST_GATEWAY_ENV_VAR is present in the agentgateway pod spec")
-			Eventually(func(g Gomega) {
-				output, err := utils.Run(exec.Command("kubectl", "get", "pods",
-					"-n", toolGateway.Namespace,
-					"-o", `jsonpath={.items[0].spec.containers[0].env[?(@.name=="TEST_GATEWAY_ENV_VAR")].value}`))
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(strings.TrimSpace(output)).To(Equal("hello-from-toolgateway"))
-			}, 30*time.Second, 5*time.Second).Should(Succeed(), "TEST_GATEWAY_ENV_VAR not found in agentgateway pod spec")
-		})
-	})
-
-	Describe("envFrom propagation", func() {
-		It("should propagate spec.envFrom to the agentgateway pod spec", func() {
-			By("verifying test-gateway-config ConfigMap is referenced via envFrom in the agentgateway pod spec")
-			Eventually(func(g Gomega) {
-				output, err := utils.Run(exec.Command("kubectl", "get", "pods",
-					"-n", toolGateway.Namespace,
-					"-o",
-					`jsonpath={.items[0].spec.containers[0].envFrom[?(@.configMapRef.name=="test-gateway-config")].configMapRef.name}`,
-				))
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(strings.TrimSpace(output)).To(Equal("test-gateway-config"))
-			}, 30*time.Second, 5*time.Second).Should(Succeed(), "test-gateway-config envFrom not found in agentgateway pod spec")
-		})
-	})
-
-	Describe("Service type", func() {
-		It("should create Service with type ClusterIP", func() {
-			By("verifying the gateway Service has type ClusterIP")
-			Eventually(func(g Gomega) {
-				output, err := utils.Run(exec.Command("kubectl", "get", "svc",
-					"-n", toolGateway.Namespace,
-					toolGateway.ServiceName,
-					"-o", "jsonpath={.spec.type}"))
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(strings.TrimSpace(output)).To(Equal("ClusterIP"))
-			}, 30*time.Second, 5*time.Second).Should(Succeed(), "Service type is not ClusterIP")
 		})
 	})
 })

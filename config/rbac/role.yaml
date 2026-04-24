@@ -17,6 +17,7 @@ rules:
   resources:
   - agentgatewaybackends
   - agentgatewayparameters
+  - agentgatewaypolicies
   verbs:
   - create
   - delete
@@ -42,6 +43,7 @@ rules:
   - runtime.agentic-layer.ai
   resources:
   - toolgatewayclasses
+  - toolroutes
   - toolservers
   verbs:
   - get
@@ -61,6 +63,7 @@ rules:
   - runtime.agentic-layer.ai
   resources:
   - toolgateways/status
+  - toolroutes/status
   verbs:
   - get
   - patch

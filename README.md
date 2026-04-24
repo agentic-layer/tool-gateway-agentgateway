@@ -52,15 +52,18 @@ make uninstall-deps
 
 ## How it Works
 
-The Tool Gateway agentgateway Operator creates and manages Gateway API resources based on ToolGateway and ToolServer custom resources:
+The Tool Gateway agentgateway Operator creates and manages Gateway API resources based on ToolGateway, ToolRoute, and ToolServer custom resources:
 
 1. **Gateway Creation**: When a ToolGateway is created, the operator creates a dedicated Gateway with the same name in the same namespace as the ToolGateway with HTTP listener on port 80. Each ToolGateway has its own Gateway instance.
 
-2. **ToolServer Integration**: For each ToolServer resource, the operator creates:
-   - **AgentgatewayBackend**: Configures the MCP backend connection to the ToolServer
-   - **HTTPRoute**: Routes traffic from the gateway to the AgentgatewayBackend using path-based matching
+2. **ToolRoute Integration**: For each ToolRoute resource, the operator creates:
+   - **AgentgatewayBackend**: Configures the MCP backend connection to the route's upstream (a cluster `ToolServer` service or an external URL).
+   - **HTTPRoute**: Routes traffic from the referenced `ToolGateway` to the `AgentgatewayBackend` at the path `/<toolroute-namespace>/<toolroute-name>/mcp`. The reachable URL is surfaced as `ToolRoute.status.url`.
+   - **AgentgatewayPolicy** (optional): When `spec.toolFilter` is set, an `AgentgatewayPolicy` is attached to the route's `HTTPRoute` carrying MCP authorization CEL rules translated from the glob allow/deny patterns.
 
-3. **Automatic Updates**: The operator watches for changes to ToolGateway and ToolServer resources and updates the corresponding Gateway API resources automatically.
+3. **ToolServer**: Describes how an MCP server is deployed. It is consumed by `ToolRoute.spec.upstream.toolServerRef`; exposure through a gateway is always driven by a `ToolRoute`.
+
+4. **Automatic Updates**: The operator watches for changes to ToolGateway and ToolRoute resources and updates the corresponding Gateway API resources automatically.
 
 ### Architecture
 
@@ -68,8 +71,12 @@ The Tool Gateway agentgateway Operator creates and manages Gateway API resources
 ToolGateway (CRD)
     |
 Gateway (same name and namespace)
+
+ToolRoute (CRD)
     |
-HTTPRoute (Gateway API) -> AgentgatewayBackend -> ToolServer
+HTTPRoute (Gateway API) --> AgentgatewayBackend --> upstream (ToolServer or external URL)
+    |
+AgentgatewayPolicy (optional, when toolFilter is set)
 ```
 
 ## Development
@@ -164,7 +171,9 @@ See `config/samples/toolgateway_v1alpha1_otel_example.yaml` for complete example
 
 ### ToolServer Configuration
 
-Define ToolServer resources that the gateway will route to:
+Define ToolServer resources that represent your MCP server deployments. A `ToolServer`
+only describes *what runs*; to actually expose it through a `ToolGateway` you must
+create a `ToolRoute`.
 
 ```yaml
 apiVersion: runtime.agentic-layer.ai/v1alpha1
@@ -181,9 +190,40 @@ spec:
   replicas: 1
 ```
 
-The operator will automatically create:
-- An **AgentgatewayBackend** for the ToolServer
-- An **HTTPRoute** connecting the Gateway to the backend
+### ToolRoute Configuration
+
+Create one `ToolRoute` per exposure of a tool server (cluster ToolServer or
+external URL) through a `ToolGateway`. Optionally restrict which tools are
+visible with `toolFilter`:
+
+```yaml
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: ToolRoute
+metadata:
+  name: my-tool-route
+  namespace: my-namespace
+spec:
+  toolGatewayRef:
+    name: my-tool-gateway
+  upstream:
+    # Exactly one of toolServerRef or external must be set
+    toolServerRef:
+      name: my-tool-server
+    # OR: external:
+    #   url: https://github-mcp.example.com/mcp
+  toolFilter:
+    # Glob allow/deny. Deny wins on conflict. If toolFilter is nil, all
+    # tools pass through unfiltered.
+    allow: ["get_*", "list_*"]
+    deny: ["*delete*"]
+```
+
+For each ToolRoute, the operator creates:
+- An **AgentgatewayBackend** configured with the resolved upstream
+- An **HTTPRoute** matching `/<route-namespace>/<route-name>/mcp` on the referenced `ToolGateway`
+- An **AgentgatewayPolicy** with MCP `authorization` CEL rules (only when `toolFilter` is set)
+
+The reachable URL is written to `ToolRoute.status.url` and is what consumers read.
 
 ### Accessing Your Tools
 
