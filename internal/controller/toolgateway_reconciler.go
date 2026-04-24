@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -41,6 +42,17 @@ const ToolGatewayAgentgatewayControllerName = "runtime.agentic-layer.ai/tool-gat
 
 const (
 	agentGatewayClassName = "agentgateway"
+	readyConditionType    = "Ready"
+)
+
+// Condition reasons for ToolGateway/ToolRoute Ready conditions. Kept deliberately
+// fine-grained so `kubectl get` / `describe` / watchers can differentiate which
+// phase of reconciliation failed without parsing the message.
+const (
+	reasonReconciled                   = "Reconciled"
+	reasonAgentgatewayParametersFailed = "AgentgatewayParametersReconciliationFailed"
+	reasonGatewayFailed                = "GatewayReconciliationFailed"
+	reasonMultiplexRoutesFailed        = "MultiplexRoutesReconciliationFailed"
 )
 
 // ToolGatewayReconciler reconciles a ToolGateway object
@@ -83,42 +95,49 @@ func (r *ToolGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		"namespace", toolGateway.Namespace,
 		"toolGatewayClass", toolGateway.Spec.ToolGatewayClassName)
 
-	// Check if this controller should process this ToolGateway
+	// Check if this controller should process this ToolGateway. When ownership
+	// cannot be determined (API error), requeue so another controller/user
+	// can observe a proper condition rather than silently dropping the object.
 	if !r.shouldProcessToolGateway(ctx, &toolGateway) {
 		log.Info("Controller is not responsible for this ToolGateway, skipping reconciliation")
 		return ctrl.Result{}, nil
 	}
 
-	if err := r.ensureAgentgatewayParameters(ctx, &toolGateway); err != nil {
-		log.Error(err, "Failed to ensure AgentgatewayParameters")
-		r.Recorder.Eventf(&toolGateway, nil, "Warning", "AgentgatewayParametersFailed", "AgentgatewayParametersFailed", "%s", err.Error())
-		_ = r.updateStatus(ctx, &toolGateway, err)
-		return ctrl.Result{}, err
+	// Run core reconciliation and always mirror the outcome to the CR status.
+	reason, reconcileErr := r.reconcileToolGateway(ctx, &toolGateway)
+	if reconcileErr != nil {
+		log.Error(reconcileErr, "Reconciliation failed", "reason", reason)
+		if statusErr := r.updateStatusNotReady(ctx, &toolGateway, reason, reconcileErr.Error()); statusErr != nil {
+			log.Error(statusErr, "Failed to update ToolGateway status to NotReady")
+		}
+		return ctrl.Result{}, reconcileErr
 	}
 
-	// Create or update the Gateway for this ToolGateway
-	if err := r.ensureGateway(ctx, &toolGateway); err != nil {
-		log.Error(err, "Failed to ensure Gateway")
-		r.Recorder.Eventf(&toolGateway, nil, "Warning", "GatewayFailed", "GatewayFailed", "%s", err.Error())
-		_ = r.updateStatus(ctx, &toolGateway, err)
-		return ctrl.Result{}, err
-	}
-
-	// Create or update multiplex routes for MCP
-	if err := r.ensureMultiplexRoutes(ctx, &toolGateway); err != nil {
-		log.Error(err, "Failed to ensure multiplex routes")
-		r.Recorder.Eventf(&toolGateway, nil, "Warning", "MultiplexRoutesFailed", "MultiplexRoutesFailed", "%s", err.Error())
-		_ = r.updateStatus(ctx, &toolGateway, err)
-		return ctrl.Result{}, err
-	}
-
-	// Update ToolGateway status with cluster-local URL and Ready condition
-	if err := r.updateStatus(ctx, &toolGateway, nil); err != nil {
+	if err := r.updateStatusReady(ctx, &toolGateway); err != nil {
 		log.Error(err, "Failed to update ToolGateway status")
 		return ctrl.Result{}, err
 	}
 
 	return ctrl.Result{}, nil
+}
+
+// reconcileToolGateway performs the core reconciliation work. Returns a reason
+// string classifying which phase failed (used to set a descriptive Ready=False
+// reason) and the underlying error. Reason is empty on success.
+func (r *ToolGatewayReconciler) reconcileToolGateway(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway) (string, error) {
+	if err := r.ensureAgentgatewayParameters(ctx, toolGateway); err != nil {
+		return reasonAgentgatewayParametersFailed, err
+	}
+
+	if err := r.ensureGateway(ctx, toolGateway); err != nil {
+		return reasonGatewayFailed, err
+	}
+
+	if err := r.ensureMultiplexRoutes(ctx, toolGateway); err != nil {
+		return reasonMultiplexRoutesFailed, err
+	}
+
+	return "", nil
 }
 
 // shouldProcessToolGateway determines if this controller is responsible for the given ToolGateway
@@ -129,8 +148,6 @@ func (r *ToolGatewayReconciler) shouldProcessToolGateway(ctx context.Context, to
 	var toolGatewayClassList agentruntimev1alpha1.ToolGatewayClassList
 	if err := r.List(ctx, &toolGatewayClassList); err != nil {
 		log.Error(err, "Failed to list ToolGatewayClasses")
-		r.Recorder.Eventf(toolGateway, nil, "Warning", "ListFailed", "ListFailed",
-			"Failed to list ToolGatewayClasses: %v", err)
 		return false
 	}
 
@@ -150,8 +167,6 @@ func (r *ToolGatewayReconciler) shouldProcessToolGateway(ctx context.Context, to
 				return true
 			}
 		}
-		// Explicit className that isn't owned by this controller
-		return false
 	}
 
 	// Look for ToolGatewayClass with default annotation among filtered classes
@@ -215,44 +230,60 @@ func (r *ToolGatewayReconciler) ensureGateway(ctx context.Context, toolGateway *
 
 	log.Info("Gateway reconciled", "operation", op, "name", gateway.Name, "namespace", gateway.Namespace)
 
-	// Record event for user visibility
+	// Only emit events on actual resource changes, not on every reconcile.
+	// This keeps the event stream bounded in steady state.
 	switch op {
 	case controllerutil.OperationResultCreated:
-		r.Recorder.Eventf(toolGateway, nil, "Normal", "GatewayCreated", "GatewayCreated",
+		r.emitNormalEvent(toolGateway, "GatewayCreated", "CreateGateway",
 			"Created Gateway %s", gateway.Name)
 	case controllerutil.OperationResultUpdated:
-		r.Recorder.Eventf(toolGateway, nil, "Normal", "GatewayUpdated", "GatewayUpdated",
+		r.emitNormalEvent(toolGateway, "GatewayUpdated", "UpdateGateway",
 			"Updated Gateway %s", gateway.Name)
 	}
 
 	return nil
 }
 
-// updateStatus patches the ToolGateway status with the cluster-local URL and a Ready condition.
-// reconcileErr is non-nil when called after a reconciliation failure.
-func (r *ToolGatewayReconciler) updateStatus(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway, reconcileErr error) error {
+// updateStatusReady marks the ToolGateway Ready=True and records the URL.
+// Uses Patch with MergeFrom so concurrent updates by other controllers do not
+// conflict (resourceVersion is not included in the patch body).
+func (r *ToolGatewayReconciler) updateStatusReady(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway) error {
 	patch := client.MergeFrom(toolGateway.DeepCopy())
 
-	if reconcileErr == nil {
-		toolGateway.Status.Url = fmt.Sprintf("http://%s.%s.svc.cluster.local", toolGateway.Name, toolGateway.Namespace)
-		apimeta.SetStatusCondition(&toolGateway.Status.Conditions, metav1.Condition{
-			Type:               "Ready",
-			Status:             metav1.ConditionTrue,
-			Reason:             "GatewayProgrammed",
-			Message:            "Gateway has been created and configured",
-			ObservedGeneration: toolGateway.Generation,
-		})
-	} else {
-		apimeta.SetStatusCondition(&toolGateway.Status.Conditions, metav1.Condition{
-			Type:               "Ready",
-			Status:             metav1.ConditionFalse,
-			Reason:             "GatewayFailed",
-			Message:            reconcileErr.Error(),
-			ObservedGeneration: toolGateway.Generation,
-		})
-	}
+	toolGateway.Status.Url = fmt.Sprintf("http://%s.%s.svc.cluster.local", toolGateway.Name, toolGateway.Namespace)
+	apimeta.SetStatusCondition(&toolGateway.Status.Conditions, metav1.Condition{
+		Type:               readyConditionType,
+		Status:             metav1.ConditionTrue,
+		Reason:             reasonReconciled,
+		Message:            "Gateway and its backing resources are configured",
+		ObservedGeneration: toolGateway.Generation,
+	})
 
-	return r.Status().Patch(ctx, toolGateway, patch)
+	if err := r.Status().Patch(ctx, toolGateway, patch); err != nil {
+		return fmt.Errorf("failed to patch ToolGateway status: %w", err)
+	}
+	return nil
+}
+
+// updateStatusNotReady marks the ToolGateway Ready=False with a phase-specific
+// reason and the concrete error message. The URL is intentionally left alone
+// (possibly stale) so downstream consumers can still see the last-known URL
+// while the operator recovers.
+func (r *ToolGatewayReconciler) updateStatusNotReady(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway, reason, message string) error {
+	patch := client.MergeFrom(toolGateway.DeepCopy())
+
+	apimeta.SetStatusCondition(&toolGateway.Status.Conditions, metav1.Condition{
+		Type:               readyConditionType,
+		Status:             metav1.ConditionFalse,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: toolGateway.Generation,
+	})
+
+	if err := r.Status().Patch(ctx, toolGateway, patch); err != nil {
+		return fmt.Errorf("failed to patch ToolGateway status: %w", err)
+	}
+	return nil
 }
 
 // ensureAgentgatewayParameters creates or updates an AgentgatewayParameters resource when Environment is configured
@@ -277,10 +308,10 @@ func (r *ToolGatewayReconciler) ensureAgentgatewayParameters(ctx context.Context
 
 	switch op {
 	case controllerutil.OperationResultCreated:
-		r.Recorder.Eventf(toolGateway, nil, "Normal", "AgentgatewayParametersCreated", "AgentgatewayParametersCreated",
+		r.emitNormalEvent(toolGateway, "AgentgatewayParametersCreated", "CreateAgentgatewayParameters",
 			"Created AgentgatewayParameters %s", params.GetName())
 	case controllerutil.OperationResultUpdated:
-		r.Recorder.Eventf(toolGateway, nil, "Normal", "AgentgatewayParametersUpdated", "AgentgatewayParametersUpdated",
+		r.emitNormalEvent(toolGateway, "AgentgatewayParametersUpdated", "UpdateAgentgatewayParameters",
 			"Updated AgentgatewayParameters %s", params.GetName())
 	}
 
@@ -338,8 +369,8 @@ func (r *ToolGatewayReconciler) getToolServersForGateway(ctx context.Context, to
 		return nil, fmt.Errorf("failed to list ToolRoutes: %w", err)
 	}
 
-	// Collect unique ToolServer references
-	tsRefs := map[string]types.NamespacedName{}
+	var result []agentruntimev1alpha1.ToolServer
+	seen := map[string]bool{}
 	for _, tr := range toolRouteList.Items {
 		gwNs := tr.Spec.ToolGatewayRef.Namespace
 		if gwNs == "" {
@@ -356,40 +387,19 @@ func (r *ToolGatewayReconciler) getToolServersForGateway(ctx context.Context, to
 			tsNs = tr.Namespace
 		}
 		key := tsNs + "/" + tr.Spec.Upstream.ToolServerRef.Name
-		tsRefs[key] = types.NamespacedName{
-			Name:      tr.Spec.Upstream.ToolServerRef.Name,
-			Namespace: tsNs,
+		if seen[key] {
+			continue
 		}
-	}
+		seen[key] = true
 
-	// Batch list all ToolServers in referenced namespaces
-	nsByNs := map[string]bool{}
-	for _, ref := range tsRefs {
-		nsByNs[ref.Namespace] = true
-	}
-
-	allToolServers := map[string]agentruntimev1alpha1.ToolServer{}
-	for ns := range nsByNs {
-		var tsList agentruntimev1alpha1.ToolServerList
-		if err := r.List(ctx, &tsList, &client.ListOptions{Namespace: ns}); err != nil {
-			return nil, fmt.Errorf("failed to list ToolServers in namespace %s: %w", ns, err)
+		var ts agentruntimev1alpha1.ToolServer
+		if err := r.Get(ctx, types.NamespacedName{Name: tr.Spec.Upstream.ToolServerRef.Name, Namespace: tsNs}, &ts); err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			return nil, fmt.Errorf("failed to get ToolServer %s/%s: %w", tsNs, tr.Spec.Upstream.ToolServerRef.Name, err)
 		}
-		for _, ts := range tsList.Items {
-			key := ts.Namespace + "/" + ts.Name
-			allToolServers[key] = ts
-		}
-	}
-
-	// Build result from cached servers
-	var result []agentruntimev1alpha1.ToolServer
-	for key, ref := range tsRefs {
-		if ts, found := allToolServers[key]; found {
-			result = append(result, ts)
-		} else {
-			// ToolServer not found - could be deleted or not yet created
-			// Log but don't fail the entire reconciliation
-			logf.Log.Info("ToolServer not found", "name", ref.Name, "namespace", ref.Namespace)
-		}
+		result = append(result, ts)
 	}
 
 	return result, nil
@@ -440,11 +450,11 @@ func (r *ToolGatewayReconciler) ensureMultiplexBackend(ctx context.Context, tool
 
 	switch op {
 	case controllerutil.OperationResultCreated:
-		r.Recorder.Eventf(toolGateway, nil, "Normal", "MultiplexBackendCreated", "MultiplexBackendCreated",
-			"Created multiplex backend %s", backend.GetName())
+		r.emitNormalEvent(toolGateway, "MultiplexBackendCreated", "CreateMultiplexBackend",
+			"Created multiplex backend %s/%s", namespace, backend.GetName())
 	case controllerutil.OperationResultUpdated:
-		r.Recorder.Eventf(toolGateway, nil, "Normal", "MultiplexBackendUpdated", "MultiplexBackendUpdated",
-			"Updated multiplex backend %s", backend.GetName())
+		r.emitNormalEvent(toolGateway, "MultiplexBackendUpdated", "UpdateMultiplexBackend",
+			"Updated multiplex backend %s/%s", namespace, backend.GetName())
 	}
 
 	return nil
@@ -485,14 +495,26 @@ func (r *ToolGatewayReconciler) ensureMultiplexRoute(ctx context.Context, toolGa
 
 	switch op {
 	case controllerutil.OperationResultCreated:
-		r.Recorder.Eventf(toolGateway, nil, "Normal", "MultiplexRouteCreated", "MultiplexRouteCreated",
-			"Created multiplex route %s", route.Name)
+		r.emitNormalEvent(toolGateway, "MultiplexRouteCreated", "CreateMultiplexRoute",
+			"Created multiplex route %s/%s", namespace, route.Name)
 	case controllerutil.OperationResultUpdated:
-		r.Recorder.Eventf(toolGateway, nil, "Normal", "MultiplexRouteUpdated", "MultiplexRouteUpdated",
-			"Updated multiplex route %s", route.Name)
+		r.emitNormalEvent(toolGateway, "MultiplexRouteUpdated", "UpdateMultiplexRoute",
+			"Updated multiplex route %s/%s", namespace, route.Name)
 	}
 
 	return nil
+}
+
+// emitNormalEvent records a Normal Kubernetes event. Guarded by nil-check so
+// reconcilers remain usable in tests that don't wire a Recorder.
+// Warning events are intentionally NOT emitted on reconciliation errors to
+// avoid spamming on persistent failures; the Ready=False condition with a
+// phase-specific reason is the source of truth for user-visible error state.
+func (r *ToolGatewayReconciler) emitNormalEvent(regarding runtime.Object, reason, action, note string, args ...interface{}) {
+	if r.Recorder == nil {
+		return
+	}
+	r.Recorder.Eventf(regarding, nil, corev1.EventTypeNormal, reason, action, note, args...)
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -506,10 +528,6 @@ func (r *ToolGatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(
 			&agentruntimev1alpha1.ToolRoute{},
 			handler.EnqueueRequestsFromMapFunc(r.findToolGatewayForToolRoute),
-		).
-		Watches(
-			&agentruntimev1alpha1.ToolServer{},
-			handler.EnqueueRequestsFromMapFunc(r.findToolGatewaysForToolServer),
 		).
 		Named(ToolGatewayAgentgatewayControllerName).
 		Complete(r)
@@ -533,48 +551,4 @@ func (r *ToolGatewayReconciler) findToolGatewayForToolRoute(_ context.Context, o
 			},
 		},
 	}
-}
-
-// findToolGatewaysForToolServer maps a ToolServer to all ToolGateways that reference it via ToolRoutes.
-// This ensures multiplex backends/routes are updated when a ToolServer's port/path changes.
-func (r *ToolGatewayReconciler) findToolGatewaysForToolServer(ctx context.Context, obj client.Object) []ctrl.Request {
-	toolServer, ok := obj.(*agentruntimev1alpha1.ToolServer)
-	if !ok {
-		return nil
-	}
-
-	// List all ToolRoutes that reference this ToolServer
-	var toolRouteList agentruntimev1alpha1.ToolRouteList
-	if err := r.List(ctx, &toolRouteList); err != nil {
-		return nil
-	}
-
-	// Find unique ToolGateways referenced by those ToolRoutes
-	gateways := map[client.ObjectKey]bool{}
-	for _, tr := range toolRouteList.Items {
-		if tr.Spec.Upstream.ToolServerRef == nil {
-			continue
-		}
-		tsNs := tr.Spec.Upstream.ToolServerRef.Namespace
-		if tsNs == "" {
-			tsNs = tr.Namespace
-		}
-		if tr.Spec.Upstream.ToolServerRef.Name != toolServer.Name || tsNs != toolServer.Namespace {
-			continue
-		}
-		gwNs := tr.Spec.ToolGatewayRef.Namespace
-		if gwNs == "" {
-			gwNs = tr.Namespace
-		}
-		gateways[client.ObjectKey{
-			Name:      tr.Spec.ToolGatewayRef.Name,
-			Namespace: gwNs,
-		}] = true
-	}
-
-	var requests []ctrl.Request
-	for key := range gateways {
-		requests = append(requests, ctrl.Request{NamespacedName: key})
-	}
-	return requests
 }

@@ -22,7 +22,9 @@ import (
 	"net/url"
 	"strconv"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -31,6 +33,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -38,6 +41,16 @@ import (
 )
 
 const ToolRouteAgentgatewayControllerName = "runtime.agentic-layer.ai/toolroute-agentgateway-controller"
+
+// Condition reasons scoped to ToolRoute. Kept separate from ToolGateway
+// reasons so each CR's kubectl output and watchers can filter cleanly.
+const (
+	reasonToolRouteGatewayNotFound    = "GatewayNotFound"
+	reasonToolRouteUpstreamUnresolved = "UpstreamUnresolved"
+	reasonToolRouteBackendFailed      = "BackendReconciliationFailed"
+	reasonToolRouteHTTPRouteFailed    = "HTTPRouteReconciliationFailed"
+	reasonToolRoutePolicyFailed       = "PolicyReconciliationFailed"
+)
 
 // ToolRouteReconciler reconciles a ToolRoute object.
 type ToolRouteReconciler struct {
@@ -58,7 +71,8 @@ type ToolRouteReconciler struct {
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 // Reconcile keeps the AgentgatewayBackend, HTTPRoute, and (optionally)
-// AgentgatewayPolicy for a ToolRoute in sync with the spec.
+// AgentgatewayPolicy for a ToolRoute in sync with the spec, and mirrors the
+// reconciliation outcome to the ToolRoute status (Ready condition + URL).
 func (r *ToolRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
@@ -78,41 +92,71 @@ func (r *ToolRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	var toolGateway agentruntimev1alpha1.ToolGateway
-	if err := r.Get(ctx, types.NamespacedName{Name: route.Spec.ToolGatewayRef.Name, Namespace: gatewayNs}, &toolGateway); err != nil {
-		if apierrors.IsNotFound(err) {
-			r.Recorder.Eventf(&route, nil, "Warning", "GatewayNotFound", "GatewayNotFound",
-				"ToolGateway %s/%s not found", gatewayNs, route.Spec.ToolGatewayRef.Name)
-			return ctrl.Result{}, nil
-		}
+	err := r.Get(ctx, types.NamespacedName{Name: route.Spec.ToolGatewayRef.Name, Namespace: gatewayNs}, &toolGateway)
+	if err != nil && !apierrors.IsNotFound(err) {
 		return ctrl.Result{}, err
+	}
+	if apierrors.IsNotFound(err) {
+		// The referenced ToolGateway does not exist yet. Surface this clearly on
+		// the status so users know why the route isn't Ready. A watch on
+		// ToolGateway (see SetupWithManager) will retrigger reconciliation once
+		// it is created; no requeue/event spam.
+		msg := fmt.Sprintf("ToolGateway %s/%s not found", gatewayNs, route.Spec.ToolGatewayRef.Name)
+		if statusErr := r.updateStatusNotReady(ctx, &route, reasonToolRouteGatewayNotFound, msg); statusErr != nil {
+			log.Error(statusErr, "Failed to update ToolRoute status to NotReady")
+		}
+		return ctrl.Result{}, nil
 	}
 
 	if !r.shouldProcess(ctx, &toolGateway) {
 		log.Info("ToolRoute targets a gateway not owned by this controller, skipping",
 			"toolGateway", toolGateway.Name, "class", toolGateway.Spec.ToolGatewayClassName)
+		// Don't touch status: another controller may be reconciling this
+		// ToolRoute and we must not fight over its conditions.
 		return ctrl.Result{}, nil
 	}
 
-	host, port, path, err := r.resolveUpstream(ctx, &route)
+	// Run core reconciliation and always mirror the outcome to the CR status.
+	routePath, reason, reconcileErr := r.reconcileToolRoute(ctx, &route, &toolGateway)
+	if reconcileErr != nil {
+		log.Error(reconcileErr, "Reconciliation failed", "reason", reason)
+		if statusErr := r.updateStatusNotReady(ctx, &route, reason, reconcileErr.Error()); statusErr != nil {
+			log.Error(statusErr, "Failed to update ToolRoute status to NotReady")
+		}
+		return ctrl.Result{}, reconcileErr
+	}
+
+	if err := r.updateStatusReady(ctx, &route, &toolGateway, routePath); err != nil {
+		log.Error(err, "Failed to update ToolRoute status")
+		return ctrl.Result{}, err
+	}
+
+	return ctrl.Result{}, nil
+}
+
+// reconcileToolRoute performs the core reconciliation work. Returns the
+// assigned route path, a reason classifying which phase failed, and the
+// underlying error. Reason is empty on success.
+func (r *ToolRouteReconciler) reconcileToolRoute(ctx context.Context, route *agentruntimev1alpha1.ToolRoute, toolGateway *agentruntimev1alpha1.ToolGateway) (routePath string, reason string, err error) {
+	host, port, path, err := r.resolveUpstream(ctx, route)
 	if err != nil {
-		r.Recorder.Eventf(&route, nil, "Warning", "UpstreamUnresolved", "UpstreamUnresolved", "%s", err.Error())
-		return ctrl.Result{}, err
+		return "", reasonToolRouteUpstreamUnresolved, err
 	}
 
-	if err := r.ensureBackend(ctx, &route, &toolGateway, host, port, path); err != nil {
-		return ctrl.Result{}, err
+	if err := r.ensureBackend(ctx, route, toolGateway, host, port, path); err != nil {
+		return "", reasonToolRouteBackendFailed, err
 	}
 
-	routePath := fmt.Sprintf("/%s/%s/mcp", route.Namespace, route.Name)
-	if err := r.ensureHTTPRoute(ctx, &route, &toolGateway, routePath); err != nil {
-		return ctrl.Result{}, err
+	routePath = fmt.Sprintf("/%s/%s/mcp", route.Namespace, route.Name)
+	if err := r.ensureHTTPRoute(ctx, route, toolGateway, routePath); err != nil {
+		return "", reasonToolRouteHTTPRouteFailed, err
 	}
 
-	if err := r.ensurePolicy(ctx, &route, &toolGateway); err != nil {
-		return ctrl.Result{}, err
+	if err := r.ensurePolicy(ctx, route, toolGateway); err != nil {
+		return "", reasonToolRoutePolicyFailed, err
 	}
 
-	return r.updateStatus(ctx, &route, &toolGateway, routePath)
+	return routePath, "", nil
 }
 
 // shouldProcess returns true when the referenced ToolGateway is owned by this controller.
@@ -217,8 +261,10 @@ func (r *ToolRouteReconciler) resolveUpstream(ctx context.Context, route *agentr
 }
 
 func (r *ToolRouteReconciler) ensureBackend(ctx context.Context, route *agentruntimev1alpha1.ToolRoute, tg *agentruntimev1alpha1.ToolGateway, host string, port int32, path string) error {
+	log := logf.FromContext(ctx)
+
 	backend := newAgentgatewayBackend(tg.Name+"-"+route.Name, route.Namespace)
-	_, err := controllerutil.CreateOrPatch(ctx, r.Client, backend, func() error {
+	op, err := controllerutil.CreateOrPatch(ctx, r.Client, backend, func() error {
 		if e := controllerutil.SetControllerReference(route, backend, r.Scheme); e != nil {
 			return e
 		}
@@ -228,17 +274,30 @@ func (r *ToolRouteReconciler) ensureBackend(ctx context.Context, route *agentrun
 	if err != nil {
 		return fmt.Errorf("failed to ensure AgentgatewayBackend: %w", err)
 	}
+
+	log.Info("AgentgatewayBackend reconciled", "operation", op, "name", backend.GetName())
+
+	switch op {
+	case controllerutil.OperationResultCreated:
+		r.emitNormalEvent(route, "BackendCreated", "CreateBackend",
+			"Created AgentgatewayBackend %s", backend.GetName())
+	case controllerutil.OperationResultUpdated:
+		r.emitNormalEvent(route, "BackendUpdated", "UpdateBackend",
+			"Updated AgentgatewayBackend %s", backend.GetName())
+	}
 	return nil
 }
 
 func (r *ToolRouteReconciler) ensureHTTPRoute(ctx context.Context, route *agentruntimev1alpha1.ToolRoute, tg *agentruntimev1alpha1.ToolGateway, routePath string) error {
+	log := logf.FromContext(ctx)
+
 	hr := &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      tg.Name + "-" + route.Name,
 			Namespace: route.Namespace,
 		},
 	}
-	_, err := controllerutil.CreateOrPatch(ctx, r.Client, hr, func() error {
+	op, err := controllerutil.CreateOrPatch(ctx, r.Client, hr, func() error {
 		if e := controllerutil.SetControllerReference(route, hr, r.Scheme); e != nil {
 			return e
 		}
@@ -252,6 +311,17 @@ func (r *ToolRouteReconciler) ensureHTTPRoute(ctx context.Context, route *agentr
 	if err != nil {
 		return fmt.Errorf("failed to ensure HTTPRoute: %w", err)
 	}
+
+	log.Info("HTTPRoute reconciled", "operation", op, "name", hr.Name)
+
+	switch op {
+	case controllerutil.OperationResultCreated:
+		r.emitNormalEvent(route, "HTTPRouteCreated", "CreateHTTPRoute",
+			"Created HTTPRoute %s", hr.Name)
+	case controllerutil.OperationResultUpdated:
+		r.emitNormalEvent(route, "HTTPRouteUpdated", "UpdateHTTPRoute",
+			"Updated HTTPRoute %s", hr.Name)
+	}
 	return nil
 }
 
@@ -259,20 +329,29 @@ func (r *ToolRouteReconciler) ensureHTTPRoute(ctx context.Context, route *agentr
 // translated from route.spec.toolFilter. When toolFilter is nil (or empty), any previously
 // created policy is deleted so tools pass through unfiltered.
 func (r *ToolRouteReconciler) ensurePolicy(ctx context.Context, route *agentruntimev1alpha1.ToolRoute, tg *agentruntimev1alpha1.ToolGateway) error {
+	log := logf.FromContext(ctx)
+
 	policyName := tg.Name + "-" + route.Name + "-toolfilter"
 
 	rules := buildMcpAuthorizationRules(route.Spec.ToolFilter)
 
 	if len(rules) == 0 {
 		existing := newAgentgatewayPolicy(policyName, route.Namespace)
-		if err := r.Delete(ctx, existing); err != nil && !apierrors.IsNotFound(err) {
-			return fmt.Errorf("failed to delete stale tool-filter policy: %w", err)
+		err := r.Delete(ctx, existing)
+		if err == nil {
+			log.Info("Deleted stale tool-filter policy", "name", policyName)
+			r.emitNormalEvent(route, "PolicyDeleted", "DeletePolicy",
+				"Deleted AgentgatewayPolicy %s (tool filter cleared)", policyName)
+			return nil
 		}
-		return nil
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to delete stale tool-filter policy: %w", err)
 	}
 
 	policy := newAgentgatewayPolicy(policyName, route.Namespace)
-	_, err := controllerutil.CreateOrPatch(ctx, r.Client, policy, func() error {
+	op, err := controllerutil.CreateOrPatch(ctx, r.Client, policy, func() error {
 		if e := controllerutil.SetControllerReference(route, policy, r.Scheme); e != nil {
 			return e
 		}
@@ -309,25 +388,118 @@ func (r *ToolRouteReconciler) ensurePolicy(ctx context.Context, route *agentrunt
 	if err != nil {
 		return fmt.Errorf("failed to ensure AgentgatewayPolicy: %w", err)
 	}
+
+	log.Info("AgentgatewayPolicy reconciled", "operation", op, "name", policyName)
+
+	switch op {
+	case controllerutil.OperationResultCreated:
+		r.emitNormalEvent(route, "PolicyCreated", "CreatePolicy",
+			"Created AgentgatewayPolicy %s", policyName)
+	case controllerutil.OperationResultUpdated:
+		r.emitNormalEvent(route, "PolicyUpdated", "UpdatePolicy",
+			"Updated AgentgatewayPolicy %s", policyName)
+	}
 	return nil
 }
 
-func (r *ToolRouteReconciler) updateStatus(ctx context.Context, route *agentruntimev1alpha1.ToolRoute, tg *agentruntimev1alpha1.ToolGateway, routePath string) (ctrl.Result, error) {
+// updateStatusReady marks the ToolRoute Ready=True and records its public URL.
+// Emits a Normal event only when Ready transitions True (not on every reconcile)
+// so a stable route doesn't spam events every loop.
+func (r *ToolRouteReconciler) updateStatusReady(ctx context.Context, route *agentruntimev1alpha1.ToolRoute, tg *agentruntimev1alpha1.ToolGateway, routePath string) error {
+	wasReady := apimeta.IsStatusConditionTrue(route.Status.Conditions, readyConditionType)
+
 	patch := client.MergeFrom(route.DeepCopy())
 	gwURL := fmt.Sprintf("http://%s.%s.svc.cluster.local%s", tg.Name, tg.Namespace, routePath)
 	route.Status.Url = gwURL
+	apimeta.SetStatusCondition(&route.Status.Conditions, metav1.Condition{
+		Type:               readyConditionType,
+		Status:             metav1.ConditionTrue,
+		Reason:             reasonReconciled,
+		Message:            fmt.Sprintf("ToolRoute is ready at %s", gwURL),
+		ObservedGeneration: route.Generation,
+	})
+
 	if err := r.Status().Patch(ctx, route, patch); err != nil {
-		return ctrl.Result{}, err
+		return fmt.Errorf("failed to patch ToolRoute status: %w", err)
 	}
-	r.Recorder.Eventf(route, nil, "Normal", "Ready", "Ready", "ToolRoute ready at %s", gwURL)
-	return ctrl.Result{}, nil
+
+	if !wasReady {
+		r.emitNormalEvent(route, "Ready", "Reconciled", "ToolRoute ready at %s", gwURL)
+	}
+	return nil
 }
 
-// SetupWithManager sets up the controller with the Manager.
+// updateStatusNotReady marks the ToolRoute Ready=False with a phase-specific
+// reason. Uses Patch with MergeFrom so stale object versions don't conflict.
+func (r *ToolRouteReconciler) updateStatusNotReady(ctx context.Context, route *agentruntimev1alpha1.ToolRoute, reason, message string) error {
+	patch := client.MergeFrom(route.DeepCopy())
+
+	apimeta.SetStatusCondition(&route.Status.Conditions, metav1.Condition{
+		Type:               readyConditionType,
+		Status:             metav1.ConditionFalse,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: route.Generation,
+	})
+
+	if err := r.Status().Patch(ctx, route, patch); err != nil {
+		return fmt.Errorf("failed to patch ToolRoute status: %w", err)
+	}
+	return nil
+}
+
+// emitNormalEvent records a Normal Kubernetes event. Nil-Recorder-safe.
+// Warning events are intentionally NOT emitted on reconciliation errors to
+// avoid spamming on persistent failures; the Ready=False condition with a
+// phase-specific reason is the user-facing source of truth for error state.
+func (r *ToolRouteReconciler) emitNormalEvent(regarding runtime.Object, reason, action, note string, args ...interface{}) {
+	if r.Recorder == nil {
+		return
+	}
+	r.Recorder.Eventf(regarding, nil, corev1.EventTypeNormal, reason, action, note, args...)
+}
+
+// SetupWithManager sets up the controller with the Manager. Watching
+// ToolGateway ensures a ToolRoute that was blocked on a missing gateway is
+// re-reconciled once that gateway appears, without requiring periodic requeue.
 func (r *ToolRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&agentruntimev1alpha1.ToolRoute{}).
 		Owns(&gatewayv1.HTTPRoute{}).
+		Watches(
+			&agentruntimev1alpha1.ToolGateway{},
+			handler.EnqueueRequestsFromMapFunc(r.findToolRoutesForToolGateway),
+		).
 		Named(ToolRouteAgentgatewayControllerName).
 		Complete(r)
+}
+
+// findToolRoutesForToolGateway enqueues every ToolRoute that targets the
+// changed ToolGateway. Used so routes waiting on a not-yet-created gateway get
+// reconciled as soon as it appears.
+func (r *ToolRouteReconciler) findToolRoutesForToolGateway(ctx context.Context, obj client.Object) []ctrl.Request {
+	tg, ok := obj.(*agentruntimev1alpha1.ToolGateway)
+	if !ok {
+		return nil
+	}
+
+	var routes agentruntimev1alpha1.ToolRouteList
+	if err := r.List(ctx, &routes); err != nil {
+		logf.FromContext(ctx).Error(err, "Failed to list ToolRoutes for ToolGateway watch")
+		return nil
+	}
+
+	var requests []ctrl.Request
+	for _, route := range routes.Items {
+		gwNs := route.Spec.ToolGatewayRef.Namespace
+		if gwNs == "" {
+			gwNs = route.Namespace
+		}
+		if route.Spec.ToolGatewayRef.Name == tg.Name && gwNs == tg.Namespace {
+			requests = append(requests, ctrl.Request{
+				NamespacedName: types.NamespacedName{Name: route.Name, Namespace: route.Namespace},
+			})
+		}
+	}
+	return requests
 }
