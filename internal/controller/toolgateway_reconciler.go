@@ -98,12 +98,12 @@ func (r *ToolGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	// Check if this controller should process this ToolGateway. When ownership
 	// cannot be determined (API error), return the error so the reconcile is
 	// requeued and the object isn't silently dropped.
-	shouldProcess, err := r.shouldProcessToolGateway(ctx, &toolGateway)
+	owned, err := isToolGatewayOwnedByController(ctx, r.Client, &toolGateway)
 	if err != nil {
 		log.Error(err, "Failed to determine controller ownership")
 		return ctrl.Result{}, err
 	}
-	if !shouldProcess {
+	if !owned {
 		log.Info("Controller is not responsible for this ToolGateway, skipping reconciliation")
 		return ctrl.Result{}, nil
 	}
@@ -143,49 +143,6 @@ func (r *ToolGatewayReconciler) reconcileToolGateway(ctx context.Context, toolGa
 	}
 
 	return "", nil
-}
-
-// shouldProcessToolGateway determines if this controller is responsible for the given ToolGateway.
-// Returns (false, nil) when another controller owns it, (true, nil) when this controller owns it,
-// and (false, error) when ownership cannot be determined due to API errors.
-func (r *ToolGatewayReconciler) shouldProcessToolGateway(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway) (bool, error) {
-	log := logf.FromContext(ctx)
-
-	// List all ToolGatewayClasses
-	var toolGatewayClassList agentruntimev1alpha1.ToolGatewayClassList
-	if err := r.List(ctx, &toolGatewayClassList); err != nil {
-		log.Error(err, "Failed to list ToolGatewayClasses")
-		return false, fmt.Errorf("failed to list ToolGatewayClasses: %w", err)
-	}
-
-	// Filter to only classes managed by this controller
-	var agentgatewayClasses []agentruntimev1alpha1.ToolGatewayClass
-	for _, tgc := range toolGatewayClassList.Items {
-		if tgc.Spec.Controller == ToolGatewayAgentgatewayControllerName {
-			agentgatewayClasses = append(agentgatewayClasses, tgc)
-		}
-	}
-
-	// If className is explicitly set, check if it matches any of our managed classes
-	toolGatewayClassName := toolGateway.Spec.ToolGatewayClassName
-	if toolGatewayClassName != "" {
-		for _, agc := range agentgatewayClasses {
-			if agc.Name == toolGatewayClassName {
-				return true, nil
-			}
-		}
-		// Explicit className that isn't owned by this controller
-		return false, nil
-	}
-
-	// Look for ToolGatewayClass with default annotation among filtered classes
-	for _, agc := range agentgatewayClasses {
-		if agc.Annotations["toolgatewayclass.kubernetes.io/is-default-class"] == "true" {
-			return true, nil
-		}
-	}
-
-	return false, nil
 }
 
 // ensureGateway creates or updates the Gateway for this ToolGateway

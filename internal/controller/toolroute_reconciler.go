@@ -108,7 +108,12 @@ func (r *ToolRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, nil
 	}
 
-	if !r.shouldProcess(ctx, &toolGateway) {
+	owned, err := isToolGatewayOwnedByController(ctx, r.Client, &toolGateway)
+	if err != nil {
+		log.Error(err, "Failed to determine controller ownership")
+		return ctrl.Result{}, err
+	}
+	if !owned {
 		log.Info("ToolRoute targets a gateway not owned by this controller, skipping",
 			"toolGateway", toolGateway.Name, "class", toolGateway.Spec.ToolGatewayClassName)
 		// Don't touch status: another controller may be reconciling this
@@ -157,44 +162,6 @@ func (r *ToolRouteReconciler) reconcileToolRoute(ctx context.Context, route *age
 	}
 
 	return routePath, "", nil
-}
-
-// shouldProcess returns true when the referenced ToolGateway is owned by this controller.
-// Matches ToolGatewayReconciler.shouldProcessToolGateway: explicit className must match an owned class,
-// otherwise defaults to checking for an owned default class.
-func (r *ToolRouteReconciler) shouldProcess(ctx context.Context, tg *agentruntimev1alpha1.ToolGateway) bool {
-	log := logf.FromContext(ctx)
-
-	var classList agentruntimev1alpha1.ToolGatewayClassList
-	if err := r.List(ctx, &classList); err != nil {
-		log.Error(err, "Failed to list ToolGatewayClasses")
-		return false
-	}
-
-	var owned []agentruntimev1alpha1.ToolGatewayClass
-	for _, tgc := range classList.Items {
-		if tgc.Spec.Controller == ToolGatewayAgentgatewayControllerName {
-			owned = append(owned, tgc)
-		}
-	}
-
-	className := tg.Spec.ToolGatewayClassName
-	if className != "" {
-		for _, c := range owned {
-			if c.Name == className {
-				return true
-			}
-		}
-		return false
-	}
-
-	// Unclassed ToolGateway: claim iff a default class is owned by this controller.
-	for _, c := range owned {
-		if c.Annotations["toolgatewayclass.kubernetes.io/is-default-class"] == "true" {
-			return true
-		}
-	}
-	return false
 }
 
 // resolveUpstream returns the MCP target host, port, and path derived from the route's upstream spec.
