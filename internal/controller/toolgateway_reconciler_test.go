@@ -280,7 +280,7 @@ var _ = Describe("ToolGateway Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, toolGateway)).To(Succeed())
 
-			// Create a ToolServer that references this gateway
+			// Create a ToolServer
 			toolServer := &agentruntimev1alpha1.ToolServer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-mcp-server",
@@ -296,18 +296,26 @@ var _ = Describe("ToolGateway Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, toolServer)).To(Succeed())
 
-			// Set ToolGatewayRef in status
-			Eventually(func() error {
-				ts := &agentruntimev1alpha1.ToolServer{}
-				if err := k8sClient.Get(ctx, types.NamespacedName{Name: "test-mcp-server", Namespace: "default"}, ts); err != nil {
-					return err
-				}
-				ts.Status.ToolGatewayRef = &corev1.ObjectReference{
-					Name:      "test-multiplex-gateway",
+			// Create a ToolRoute that exposes the ToolServer through the gateway
+			toolRoute := &agentruntimev1alpha1.ToolRoute{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-multiplex-route",
 					Namespace: "default",
-				}
-				return k8sClient.Status().Update(ctx, ts)
-			}, "10s", "1s").Should(Succeed())
+				},
+				Spec: agentruntimev1alpha1.ToolRouteSpec{
+					ToolGatewayRef: corev1.ObjectReference{
+						Name:      "test-multiplex-gateway",
+						Namespace: "default",
+					},
+					Upstream: agentruntimev1alpha1.ToolRouteUpstream{
+						ToolServerRef: &corev1.ObjectReference{
+							Name:      "test-mcp-server",
+							Namespace: "default",
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, toolRoute)).To(Succeed())
 
 			// Reconcile ToolGateway
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{

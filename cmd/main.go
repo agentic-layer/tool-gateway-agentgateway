@@ -161,7 +161,6 @@ func main() {
 	// generate self-signed certificates for the metrics server. While convenient for development and testing,
 	// this setup is not recommended for production.
 	//
-	// TODO(user): If you enable certManager, uncomment the following lines:
 	// - [METRICS-WITH-CERTS] at config/default/kustomization.yaml to generate and use certificates
 	// managed by cert-manager for the metrics server.
 	// - [PROMETHEUS-WITH-CERTS] at config/prometheus/kustomization.yaml for TLS certification.
@@ -216,12 +215,12 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "ToolGateway")
 		os.Exit(1)
 	}
-	if err = (&controller.ToolServerReconciler{
+	if err = (&controller.ToolRouteReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorder("toolserver-agentgateway-controller"),
+		Recorder: mgr.GetEventRecorder("toolroute-agentgateway-controller"),
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "ToolServer")
+		setupLog.Error(err, "unable to create controller", "controller", "ToolRoute")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder

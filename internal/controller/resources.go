@@ -125,6 +125,16 @@ func newAgentgatewayParameters(name, namespace string) *unstructured.Unstructure
 	return params
 }
 
+// newAgentgatewayPolicy creates a new unstructured AgentgatewayPolicy resource.
+func newAgentgatewayPolicy(name, namespace string) *unstructured.Unstructured {
+	policy := &unstructured.Unstructured{}
+	policy.SetAPIVersion("agentgateway.dev/v1alpha1")
+	policy.SetKind("AgentgatewayPolicy")
+	policy.SetName(name)
+	policy.SetNamespace(namespace)
+	return policy
+}
+
 // setAgentgatewayParametersSpec writes spec.env and spec.deployment.spec (for envFrom)
 // on the AgentgatewayParameters from the given ToolGatewaySpec.
 //

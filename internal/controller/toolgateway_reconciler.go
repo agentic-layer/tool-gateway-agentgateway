@@ -24,6 +24,7 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	kevents "k8s.io/client-go/tools/events"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -53,6 +54,7 @@ type ToolGatewayReconciler struct {
 // +kubebuilder:rbac:groups=runtime.agentic-layer.ai,resources=toolgateways/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=runtime.agentic-layer.ai,resources=toolgatewayclasses,verbs=get;list;watch
 // +kubebuilder:rbac:groups=runtime.agentic-layer.ai,resources=toolservers,verbs=get;list;watch
+// +kubebuilder:rbac:groups=runtime.agentic-layer.ai,resources=toolroutes,verbs=get;list;watch
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=agentgateway.dev,resources=agentgatewaybackends,verbs=get;list;watch;create;update;patch;delete
@@ -325,21 +327,46 @@ func (r *ToolGatewayReconciler) ensureMultiplexRoutes(ctx context.Context, toolG
 	return nil
 }
 
-// getToolServersForGateway retrieves all ToolServers that reference this ToolGateway
+// getToolServersForGateway retrieves all ToolServers exposed to this ToolGateway via ToolRoutes.
+// Only ToolRoutes with an upstream.toolServerRef contribute; external upstreams are skipped.
+// Duplicate ToolServers (referenced by multiple routes) are de-duplicated.
 func (r *ToolGatewayReconciler) getToolServersForGateway(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway) ([]agentruntimev1alpha1.ToolServer, error) {
-	var toolServerList agentruntimev1alpha1.ToolServerList
-	if err := r.List(ctx, &toolServerList); err != nil {
-		return nil, fmt.Errorf("failed to list ToolServers: %w", err)
+	var toolRouteList agentruntimev1alpha1.ToolRouteList
+	if err := r.List(ctx, &toolRouteList); err != nil {
+		return nil, fmt.Errorf("failed to list ToolRoutes: %w", err)
 	}
 
 	var result []agentruntimev1alpha1.ToolServer
-	for _, ts := range toolServerList.Items {
-		// Check if ToolServer has a ToolGatewayRef in status pointing to this gateway
-		if ts.Status.ToolGatewayRef != nil &&
-			ts.Status.ToolGatewayRef.Name == toolGateway.Name &&
-			ts.Status.ToolGatewayRef.Namespace == toolGateway.Namespace {
-			result = append(result, ts)
+	seen := map[string]bool{}
+	for _, tr := range toolRouteList.Items {
+		gwNs := tr.Spec.ToolGatewayRef.Namespace
+		if gwNs == "" {
+			gwNs = tr.Namespace
 		}
+		if tr.Spec.ToolGatewayRef.Name != toolGateway.Name || gwNs != toolGateway.Namespace {
+			continue
+		}
+		if tr.Spec.Upstream.ToolServerRef == nil {
+			continue
+		}
+		tsNs := tr.Spec.Upstream.ToolServerRef.Namespace
+		if tsNs == "" {
+			tsNs = tr.Namespace
+		}
+		key := tsNs + "/" + tr.Spec.Upstream.ToolServerRef.Name
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+
+		var ts agentruntimev1alpha1.ToolServer
+		if err := r.Get(ctx, types.NamespacedName{Name: tr.Spec.Upstream.ToolServerRef.Name, Namespace: tsNs}, &ts); err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			return nil, fmt.Errorf("failed to get ToolServer %s/%s: %w", tsNs, tr.Spec.Upstream.ToolServerRef.Name, err)
+		}
+		result = append(result, ts)
 	}
 
 	return result, nil
@@ -454,31 +481,28 @@ func (r *ToolGatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&gatewayv1.HTTPRoute{}).
 		Owns(agentgatewayParams).
 		Watches(
-			&agentruntimev1alpha1.ToolServer{},
-			handler.EnqueueRequestsFromMapFunc(r.findToolGatewayForToolServer),
+			&agentruntimev1alpha1.ToolRoute{},
+			handler.EnqueueRequestsFromMapFunc(r.findToolGatewayForToolRoute),
 		).
 		Named(ToolGatewayAgentgatewayControllerName).
 		Complete(r)
 }
 
-// findToolGatewayForToolServer maps a ToolServer to its associated ToolGateway for reconciliation
-func (r *ToolGatewayReconciler) findToolGatewayForToolServer(_ context.Context, obj client.Object) []ctrl.Request {
-	toolServer, ok := obj.(*agentruntimev1alpha1.ToolServer)
+// findToolGatewayForToolRoute maps a ToolRoute to its referenced ToolGateway for reconciliation.
+func (r *ToolGatewayReconciler) findToolGatewayForToolRoute(_ context.Context, obj client.Object) []ctrl.Request {
+	toolRoute, ok := obj.(*agentruntimev1alpha1.ToolRoute)
 	if !ok {
 		return nil
 	}
-
-	// Check if ToolServer has a ToolGatewayRef in status
-	if toolServer.Status.ToolGatewayRef == nil {
-		return nil
+	ns := toolRoute.Spec.ToolGatewayRef.Namespace
+	if ns == "" {
+		ns = toolRoute.Namespace
 	}
-
-	// Trigger reconciliation for the referenced ToolGateway
 	return []ctrl.Request{
 		{
 			NamespacedName: client.ObjectKey{
-				Name:      toolServer.Status.ToolGatewayRef.Name,
-				Namespace: toolServer.Status.ToolGatewayRef.Namespace,
+				Name:      toolRoute.Spec.ToolGatewayRef.Name,
+				Namespace: ns,
 			},
 		},
 	}

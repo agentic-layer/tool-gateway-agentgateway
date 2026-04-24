@@ -4,3 +4,4 @@ resources:
   - runtime.agentic-layer.ai_toolgateways.yaml
   - runtime.agentic-layer.ai_toolgatewayclasses.yaml
   - runtime.agentic-layer.ai_toolservers.yaml
+  - runtime.agentic-layer.ai_toolroutes.yaml

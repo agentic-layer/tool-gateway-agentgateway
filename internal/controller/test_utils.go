@@ -27,8 +27,15 @@ import (
 )
 
 // cleanupTestResources cleans up all test resources in the specified namespace.
-// This is a shared utility function used by both ToolGateway and ToolServer tests.
+// This is a shared utility function used by both ToolGateway and ToolRoute tests.
 func cleanupTestResources(ctx context.Context, k8sClient client.Client, namespace string) {
+	// Clean up all tool routes in the namespace
+	toolRouteList := &agentruntimev1alpha1.ToolRouteList{}
+	gomega.Expect(k8sClient.List(ctx, toolRouteList, &client.ListOptions{Namespace: namespace})).To(gomega.Succeed())
+	for i := range toolRouteList.Items {
+		_ = k8sClient.Delete(ctx, &toolRouteList.Items[i])
+	}
+
 	// Clean up all tool servers in the namespace
 	toolServerList := &agentruntimev1alpha1.ToolServerList{}
 	gomega.Expect(k8sClient.List(ctx, toolServerList, &client.ListOptions{Namespace: namespace})).To(gomega.Succeed())
@@ -64,5 +71,23 @@ func cleanupTestResources(ctx context.Context, k8sClient client.Client, namespac
 	_ = k8sClient.List(ctx, agentgatewayParamsList, &client.ListOptions{Namespace: namespace})
 	for i := range agentgatewayParamsList.Items {
 		_ = k8sClient.Delete(ctx, &agentgatewayParamsList.Items[i])
+	}
+
+	// Clean up all AgentgatewayBackends in the namespace
+	agentgatewayBackendList := &unstructured.UnstructuredList{}
+	agentgatewayBackendList.SetAPIVersion("agentgateway.dev/v1alpha1")
+	agentgatewayBackendList.SetKind("AgentgatewayBackendList")
+	_ = k8sClient.List(ctx, agentgatewayBackendList, &client.ListOptions{Namespace: namespace})
+	for i := range agentgatewayBackendList.Items {
+		_ = k8sClient.Delete(ctx, &agentgatewayBackendList.Items[i])
+	}
+
+	// Clean up all AgentgatewayPolicies in the namespace
+	agentgatewayPolicyList := &unstructured.UnstructuredList{}
+	agentgatewayPolicyList.SetAPIVersion("agentgateway.dev/v1alpha1")
+	agentgatewayPolicyList.SetKind("AgentgatewayPolicyList")
+	_ = k8sClient.List(ctx, agentgatewayPolicyList, &client.ListOptions{Namespace: namespace})
+	for i := range agentgatewayPolicyList.Items {
+		_ = k8sClient.Delete(ctx, &agentgatewayPolicyList.Items[i])
 	}
 }

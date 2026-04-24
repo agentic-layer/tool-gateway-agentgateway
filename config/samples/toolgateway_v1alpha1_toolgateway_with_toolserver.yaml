@@ -1,5 +1,5 @@
 # This sample demonstrates a complete ToolGateway deployment with multiple MCP tool servers
-# spread across different namespaces, with path-based routing.
+# spread across different namespaces, exposed via ToolRoutes with path-based routing.
 # It can be applied to a test cluster using:
 #   kubectl apply -f toolgateway_v1alpha1_toolgateway_with_toolserver.yaml
 
@@ -81,9 +81,21 @@ spec:
       value: "get_weather"
     - name: ECHO_TOOL_RESPONSE
       value: "Sunny, 72°F"
+
+# ToolRoute exposing server-a through test-tool-gateway
+---
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: ToolRoute
+metadata:
+  name: server-a
+  namespace: namespace-a
+spec:
   toolGatewayRef:
     name: test-tool-gateway
     namespace: tool-gateway
+  upstream:
+    toolServerRef:
+      name: server-a
 
 # ToolServer 2: server-b in namespace-a with custom tool "get_status"
 ---
@@ -115,9 +127,21 @@ spec:
       value: "get_status"
     - name: ECHO_TOOL_RESPONSE
       value: "All systems operational"
+
+# ToolRoute exposing server-b through test-tool-gateway
+---
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: ToolRoute
+metadata:
+  name: server-b
+  namespace: namespace-a
+spec:
   toolGatewayRef:
     name: test-tool-gateway
     namespace: tool-gateway
+  upstream:
+    toolServerRef:
+      name: server-b
 
 # ToolServer 3: server-c in namespace-b with custom tool "get_info"
 ---
@@ -139,6 +163,18 @@ spec:
       value: "get_info"
     - name: ECHO_TOOL_RESPONSE
       value: "Information available"
+
+# ToolRoute exposing server-c through test-tool-gateway
+---
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: ToolRoute
+metadata:
+  name: server-c
+  namespace: namespace-b
+spec:
   toolGatewayRef:
     name: test-tool-gateway
     namespace: tool-gateway
+  upstream:
+    toolServerRef:
+      name: server-c
