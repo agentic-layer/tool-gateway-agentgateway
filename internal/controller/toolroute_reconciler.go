@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -86,22 +87,31 @@ func (r *ToolRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	log.Info("Reconciling ToolRoute", "name", route.Name, "namespace", route.Namespace)
 
-	gatewayNs := route.Spec.ToolGatewayRef.Namespace
-	if gatewayNs == "" {
-		gatewayNs = route.Namespace
+	gatewayKey, err := resolveToolGatewayKey(ctx, r.Client, &route)
+	if err != nil {
+		// No default ToolGateway exists (yet). The ToolGateway watch will
+		// retrigger reconciliation when one is created in the default
+		// namespace; for any other lookup error, surface it.
+		if errors.Is(err, errNoDefaultToolGateway) {
+			if statusErr := r.updateStatusNotReady(ctx, &route, reasonToolRouteGatewayNotFound, err.Error()); statusErr != nil {
+				log.Error(statusErr, "Failed to update ToolRoute status to NotReady")
+			}
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, err
 	}
 
 	var toolGateway agentruntimev1alpha1.ToolGateway
-	err := r.Get(ctx, types.NamespacedName{Name: route.Spec.ToolGatewayRef.Name, Namespace: gatewayNs}, &toolGateway)
+	err = r.Get(ctx, gatewayKey, &toolGateway)
 	if err != nil && !apierrors.IsNotFound(err) {
 		return ctrl.Result{}, err
 	}
 	if apierrors.IsNotFound(err) {
-		// The referenced ToolGateway does not exist yet. Surface this clearly on
-		// the status so users know why the route isn't Ready. A watch on
-		// ToolGateway (see SetupWithManager) will retrigger reconciliation once
-		// it is created; no requeue/event spam.
-		msg := fmt.Sprintf("ToolGateway %s/%s not found", gatewayNs, route.Spec.ToolGatewayRef.Name)
+		// The explicitly referenced ToolGateway does not exist yet. Surface
+		// this clearly on the status so users know why the route isn't Ready.
+		// A watch on ToolGateway (see SetupWithManager) will retrigger
+		// reconciliation once it is created; no requeue/event spam.
+		msg := fmt.Sprintf("ToolGateway %s/%s not found", gatewayKey.Namespace, gatewayKey.Name)
 		if statusErr := r.updateStatusNotReady(ctx, &route, reasonToolRouteGatewayNotFound, msg); statusErr != nil {
 			log.Error(statusErr, "Failed to update ToolRoute status to NotReady")
 		}
@@ -449,7 +459,9 @@ func (r *ToolRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 // findToolRoutesForToolGateway enqueues every ToolRoute that targets the
 // changed ToolGateway. Used so routes waiting on a not-yet-created gateway get
-// reconciled as soon as it appears.
+// reconciled as soon as it appears. Routes with no ToolGatewayRef are
+// enqueued only when the changed gateway lives in defaultToolGatewayNamespace,
+// since that is the only namespace consulted for the default lookup.
 func (r *ToolRouteReconciler) findToolRoutesForToolGateway(ctx context.Context, obj client.Object) []ctrl.Request {
 	tg, ok := obj.(*agentruntimev1alpha1.ToolGateway)
 	if !ok {
@@ -464,6 +476,14 @@ func (r *ToolRouteReconciler) findToolRoutesForToolGateway(ctx context.Context, 
 
 	var requests []ctrl.Request
 	for _, route := range routes.Items {
+		if route.Spec.ToolGatewayRef == nil {
+			if tg.Namespace == defaultToolGatewayNamespace {
+				requests = append(requests, ctrl.Request{
+					NamespacedName: types.NamespacedName{Name: route.Name, Namespace: route.Namespace},
+				})
+			}
+			continue
+		}
 		gwNs := route.Spec.ToolGatewayRef.Namespace
 		if gwNs == "" {
 			gwNs = route.Namespace

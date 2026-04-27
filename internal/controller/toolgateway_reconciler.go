@@ -328,6 +328,7 @@ func (r *ToolGatewayReconciler) ensureMultiplexRoutes(ctx context.Context, toolG
 
 // getToolServersForGateway retrieves all ToolServers exposed to this ToolGateway via ToolRoutes.
 // Only ToolRoutes with an upstream.toolServerRef contribute; external upstreams are skipped.
+// Routes with a nil ToolGatewayRef are matched when this gateway is their resolved default.
 // Duplicate ToolServers (referenced by multiple routes) are de-duplicated.
 func (r *ToolGatewayReconciler) getToolServersForGateway(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway) ([]agentruntimev1alpha1.ToolServer, error) {
 	var toolRouteList agentruntimev1alpha1.ToolRouteList
@@ -335,14 +336,20 @@ func (r *ToolGatewayReconciler) getToolServersForGateway(ctx context.Context, to
 		return nil, fmt.Errorf("failed to list ToolRoutes: %w", err)
 	}
 
+	gwKey := types.NamespacedName{Name: toolGateway.Name, Namespace: toolGateway.Namespace}
+
 	var result []agentruntimev1alpha1.ToolServer
 	seen := map[string]bool{}
-	for _, tr := range toolRouteList.Items {
-		gwNs := tr.Spec.ToolGatewayRef.Namespace
-		if gwNs == "" {
-			gwNs = tr.Namespace
+	for i := range toolRouteList.Items {
+		tr := toolRouteList.Items[i]
+		key, err := resolveToolGatewayKey(ctx, r.Client, &tr)
+		if err != nil {
+			// Routes with no resolvable target (e.g. no default ToolGateway,
+			// or ambiguous) are simply skipped here; the ToolRouteReconciler
+			// surfaces the error on the route's status.
+			continue
 		}
-		if tr.Spec.ToolGatewayRef.Name != toolGateway.Name || gwNs != toolGateway.Namespace {
+		if key != gwKey {
 			continue
 		}
 		if tr.Spec.Upstream.ToolServerRef == nil {
@@ -352,11 +359,11 @@ func (r *ToolGatewayReconciler) getToolServersForGateway(ctx context.Context, to
 		if tsNs == "" {
 			tsNs = tr.Namespace
 		}
-		key := tsNs + "/" + tr.Spec.Upstream.ToolServerRef.Name
-		if seen[key] {
+		tsKey := tsNs + "/" + tr.Spec.Upstream.ToolServerRef.Name
+		if seen[tsKey] {
 			continue
 		}
-		seen[key] = true
+		seen[tsKey] = true
 
 		var ts agentruntimev1alpha1.ToolServer
 		if err := r.Get(ctx, types.NamespacedName{Name: tr.Spec.Upstream.ToolServerRef.Name, Namespace: tsNs}, &ts); err != nil {
@@ -503,24 +510,20 @@ func (r *ToolGatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-// findToolGatewayForToolRoute maps a ToolRoute to its referenced ToolGateway for reconciliation.
-func (r *ToolGatewayReconciler) findToolGatewayForToolRoute(_ context.Context, obj client.Object) []ctrl.Request {
+// findToolGatewayForToolRoute maps a ToolRoute to its referenced ToolGateway
+// for reconciliation. When the route has no explicit ToolGatewayRef, the
+// default ToolGateway (if any) is resolved and enqueued; if no default can be
+// determined we return nothing, since there's no concrete gateway to wake up.
+func (r *ToolGatewayReconciler) findToolGatewayForToolRoute(ctx context.Context, obj client.Object) []ctrl.Request {
 	toolRoute, ok := obj.(*agentruntimev1alpha1.ToolRoute)
 	if !ok {
 		return nil
 	}
-	ns := toolRoute.Spec.ToolGatewayRef.Namespace
-	if ns == "" {
-		ns = toolRoute.Namespace
+	key, err := resolveToolGatewayKey(ctx, r.Client, toolRoute)
+	if err != nil {
+		return nil
 	}
-	return []ctrl.Request{
-		{
-			NamespacedName: client.ObjectKey{
-				Name:      toolRoute.Spec.ToolGatewayRef.Name,
-				Namespace: ns,
-			},
-		},
-	}
+	return []ctrl.Request{{NamespacedName: key}}
 }
 
 // findToolGatewaysForToolServer maps a ToolServer to all ToolGateways that reference it via ToolRoutes.
@@ -539,7 +542,8 @@ func (r *ToolGatewayReconciler) findToolGatewaysForToolServer(ctx context.Contex
 
 	// Find unique ToolGateways referenced by those ToolRoutes
 	gateways := map[client.ObjectKey]bool{}
-	for _, tr := range toolRouteList.Items {
+	for i := range toolRouteList.Items {
+		tr := toolRouteList.Items[i]
 		if tr.Spec.Upstream.ToolServerRef == nil {
 			continue
 		}
@@ -550,14 +554,11 @@ func (r *ToolGatewayReconciler) findToolGatewaysForToolServer(ctx context.Contex
 		if tr.Spec.Upstream.ToolServerRef.Name != toolServer.Name || tsNs != toolServer.Namespace {
 			continue
 		}
-		gwNs := tr.Spec.ToolGatewayRef.Namespace
-		if gwNs == "" {
-			gwNs = tr.Namespace
+		key, err := resolveToolGatewayKey(ctx, r.Client, &tr)
+		if err != nil {
+			continue
 		}
-		gateways[client.ObjectKey{
-			Name:      tr.Spec.ToolGatewayRef.Name,
-			Namespace: gwNs,
-		}] = true
+		gateways[key] = true
 	}
 
 	var requests []ctrl.Request

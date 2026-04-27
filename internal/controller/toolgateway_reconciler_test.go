@@ -303,7 +303,7 @@ var _ = Describe("ToolGateway Controller", func() {
 					Namespace: "default",
 				},
 				Spec: agentruntimev1alpha1.ToolRouteSpec{
-					ToolGatewayRef: corev1.ObjectReference{
+					ToolGatewayRef: &corev1.ObjectReference{
 						Name:      "test-multiplex-gateway",
 						Namespace: "default",
 					},

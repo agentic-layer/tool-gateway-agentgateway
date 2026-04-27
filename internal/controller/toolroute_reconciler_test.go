@@ -75,7 +75,7 @@ var _ = Describe("ToolRouteReconciler", func() {
 		tr := &agentruntimev1alpha1.ToolRoute{
 			ObjectMeta: metav1.ObjectMeta{Name: "tr-skip", Namespace: ns},
 			Spec: agentruntimev1alpha1.ToolRouteSpec{
-				ToolGatewayRef: corev1.ObjectReference{Name: "foreign-tg"},
+				ToolGatewayRef: &corev1.ObjectReference{Name: "foreign-tg"},
 				Upstream: agentruntimev1alpha1.ToolRouteUpstream{
 					External: &agentruntimev1alpha1.ExternalUpstream{Url: "https://example.com/mcp"},
 				},
@@ -124,7 +124,7 @@ var _ = Describe("ToolRouteReconciler", func() {
 		tr := &agentruntimev1alpha1.ToolRoute{
 			ObjectMeta: metav1.ObjectMeta{Name: "tr-cluster", Namespace: ns},
 			Spec: agentruntimev1alpha1.ToolRouteSpec{
-				ToolGatewayRef: corev1.ObjectReference{Name: "own-tg"},
+				ToolGatewayRef: &corev1.ObjectReference{Name: "own-tg"},
 				Upstream: agentruntimev1alpha1.ToolRouteUpstream{
 					ToolServerRef: &corev1.ObjectReference{Name: "ts-1"},
 				},
@@ -176,7 +176,7 @@ var _ = Describe("ToolRouteReconciler", func() {
 		tr := &agentruntimev1alpha1.ToolRoute{
 			ObjectMeta: metav1.ObjectMeta{Name: "tr-external", Namespace: ns},
 			Spec: agentruntimev1alpha1.ToolRouteSpec{
-				ToolGatewayRef: corev1.ObjectReference{Name: "own-tg-ext"},
+				ToolGatewayRef: &corev1.ObjectReference{Name: "own-tg-ext"},
 				Upstream: agentruntimev1alpha1.ToolRouteUpstream{
 					External: &agentruntimev1alpha1.ExternalUpstream{Url: "https://github-mcp.example.com/mcp"},
 				},
@@ -217,7 +217,7 @@ var _ = Describe("ToolRouteReconciler", func() {
 		tr := &agentruntimev1alpha1.ToolRoute{
 			ObjectMeta: metav1.ObjectMeta{Name: "tr-filtered", Namespace: ns},
 			Spec: agentruntimev1alpha1.ToolRouteSpec{
-				ToolGatewayRef: corev1.ObjectReference{Name: "own-tg-filter"},
+				ToolGatewayRef: &corev1.ObjectReference{Name: "own-tg-filter"},
 				Upstream: agentruntimev1alpha1.ToolRouteUpstream{
 					External: &agentruntimev1alpha1.ExternalUpstream{Url: "https://example.com/mcp"},
 				},
