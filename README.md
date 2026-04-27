@@ -203,7 +203,7 @@ metadata:
   name: my-tool-route
   namespace: my-namespace
 spec:
-  toolGatewayRef:
+  toolGatewayRef:                # Optional; see "Default ToolGateway resolution" below
     name: my-tool-gateway
   upstream:
     # Exactly one of toolServerRef or external must be set
@@ -224,6 +224,13 @@ For each ToolRoute, the operator creates:
 - An **AgentgatewayPolicy** with MCP `authorization` CEL rules (only when `toolFilter` is set)
 
 The reachable URL is written to `ToolRoute.status.url` and is what consumers read.
+
+#### Default ToolGateway resolution
+
+`spec.toolGatewayRef` is optional. The operator resolves the target `ToolGateway` as follows:
+
+- If `toolGatewayRef` is set, the explicit reference is used. The `namespace` field defaults to the ToolRoute's own namespace when omitted.
+- If `toolGatewayRef` is omitted, the operator selects a `ToolGateway` from the well-known `tool-gateway` namespace. If multiple exist there, the first one listed wins (a warning is logged). If none exists, the route's status is set to `NotReady` with reason `ToolRouteGatewayNotFound`; reconciliation retriggers automatically once a default `ToolGateway` is created in that namespace.
 
 ### Accessing Your Tools
 
