@@ -170,6 +170,7 @@ var _ = Describe("ToolGateway", func() {
 					"denied tool should be rejected as if unknown, got: %v", rejected.RPCError)
 			}, 2*time.Minute, 5*time.Second).Should(Succeed(), "filtered tool call on aggregate should have been rejected")
 		})
+
 	})
 
 	Describe("root aggregate endpoint", func() {
@@ -185,6 +186,36 @@ var _ = Describe("ToolGateway", func() {
 					"f63_echo",
 				}))
 			}, 2*time.Minute, 5*time.Second).Should(Succeed(), "root aggregate tools did not match")
+		})
+	})
+
+	Describe("cross-namespace policy cleanup", func() {
+		It("should clean up cross-namespace AgentgatewayPolicies when ToolGateway is deleted", func() {
+			By("verifying multiplex policies exist in namespace-b")
+			Eventually(func(g Gomega) {
+				output, err := utils.Run(exec.Command("kubectl", "get", "agentgatewaypolicies",
+					"-n", "namespace-b",
+					"-l", "runtime.agentic-layer.ai/managed-by=tool-gateway-agentgateway-controller",
+					"-o", "name"))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).NotTo(BeEmpty(), "Expected multiplex policies to exist in namespace-b")
+			}, 1*time.Minute, 5*time.Second).Should(Succeed(), "multiplex policies should exist")
+
+			By("deleting the ToolGateway")
+			_, err := utils.Run(exec.Command("kubectl", "delete", "toolgateway", "test-tool-gateway",
+				"-n", "tool-gateway"))
+			Expect(err).NotTo(HaveOccurred(), "Failed to delete ToolGateway")
+
+			By("verifying cross-namespace policies are cleaned up")
+			Eventually(func(g Gomega) {
+				output, err := utils.Run(exec.Command("kubectl", "get", "agentgatewaypolicies",
+					"-n", "namespace-b",
+					"-l", "runtime.agentic-layer.ai/managed-by=tool-gateway-agentgateway-controller",
+					"-o", "name"))
+				if err == nil {
+					g.Expect(output).To(BeEmpty(), "Expected all multiplex policies to be deleted from namespace-b")
+				}
+			}, 1*time.Minute, 5*time.Second).Should(Succeed(), "cross-namespace policies should be cleaned up")
 		})
 	})
 })

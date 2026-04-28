@@ -85,6 +85,17 @@ func orJoin(preds []string) string {
 // into AgentgatewayPolicy.spec.backend.mcp.authorization.policy.matchExpressions.
 // Returns nil when filter is nil or when allow and deny are both empty.
 func buildMcpAuthorizationRules(filter *agentruntimev1alpha1.ToolFilter) []string {
+	return buildMcpAuthorizationRulesScopedToTarget(filter, "")
+}
+
+// buildMcpAuthorizationRulesScopedToTarget builds the same rules as buildMcpAuthorizationRules
+// but scopes them to a specific multiplex target (matched via `mcp.tool.target`). Tool
+// patterns are matched against `mcp.tool.name`, which agentgateway evaluates against the
+// resolved upstream tool name *without* the multiplex prefix; the scoping is therefore
+// done with the target identity, not by string-prefixing the patterns. When target is empty
+// the rule applies unconditionally; when non-empty the rule short-circuits to true for tools
+// belonging to other targets so they remain governed by their own filter (or none at all).
+func buildMcpAuthorizationRulesScopedToTarget(filter *agentruntimev1alpha1.ToolFilter, target string) []string {
 	if filter == nil || (len(filter.Allow) == 0 && len(filter.Deny) == 0) {
 		return nil
 	}
@@ -98,14 +109,53 @@ func buildMcpAuthorizationRules(filter *agentruntimev1alpha1.ToolFilter) []strin
 		denyPreds = append(denyPreds, globToCELPredicate(p))
 	}
 
+	var inner string
 	switch {
 	case len(allowPreds) > 0 && len(denyPreds) > 0:
-		return []string{"(" + orJoin(allowPreds) + ") && !(" + orJoin(denyPreds) + ")"}
+		inner = "(" + orJoin(allowPreds) + ") && !(" + orJoin(denyPreds) + ")"
 	case len(allowPreds) > 0:
-		return []string{orJoin(allowPreds)}
+		inner = orJoin(allowPreds)
 	case len(denyPreds) > 0:
-		return []string{"!(" + orJoin(denyPreds) + ")"}
+		inner = "!(" + orJoin(denyPreds) + ")"
 	default:
 		return nil
 	}
+
+	if target == "" {
+		return []string{inner}
+	}
+	return []string{"mcp.tool.target != " + celEscape(target) + " || (" + inner + ")"}
+}
+
+// MultiplexFilterContribution carries one ToolRoute's filter into the multiplex
+// authorization aggregator together with the multiplex target name that
+// identifies its tools at request time via `mcp.tool.target`. Target is empty
+// when the rule should apply unconditionally (e.g., a single-target multiplex
+// where scoping is unnecessary).
+type MultiplexFilterContribution struct {
+	Target string
+	Filter *agentruntimev1alpha1.ToolFilter
+}
+
+// buildMultiplexAuthorizationRules combines per-route filters into the
+// matchExpressions for an AgentgatewayPolicy attached to a multiplex HTTPRoute.
+// All contributions are AND'd together so a tool must satisfy every contributing
+// route's filter (most filters short-circuit to true for tools not in their
+// prefix). Returns nil when no contribution has a non-empty filter.
+func buildMultiplexAuthorizationRules(contributions []MultiplexFilterContribution) []string {
+	clauses := make([]string, 0, len(contributions))
+	for _, c := range contributions {
+		clauses = append(clauses, buildMcpAuthorizationRulesScopedToTarget(c.Filter, c.Target)...)
+	}
+	if len(clauses) == 0 {
+		return nil
+	}
+	if len(clauses) == 1 {
+		return clauses
+	}
+	parts := make([]string, len(clauses))
+	for i, c := range clauses {
+		parts[i] = "(" + c + ")"
+	}
+	return []string{strings.Join(parts, " && ")}
 }
