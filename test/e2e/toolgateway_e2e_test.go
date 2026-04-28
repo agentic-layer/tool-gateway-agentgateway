@@ -18,6 +18,7 @@ package e2e
 
 import (
 	"context"
+	"errors"
 	"os/exec"
 	"time"
 
@@ -73,10 +74,10 @@ var _ = Describe("ToolGateway", func() {
 				g.Expect(tools).To(Equal([]string{"echo", "get_status"}))
 			}, 2*time.Minute, 5*time.Second).Should(Succeed(), "tools from server-b did not match")
 
-			By("listing tools from server-c")
+			By("listing tools from server-c (get_info is filtered out via ToolRoute.spec.toolFilter)")
 			Eventually(func(g Gomega) {
 				tools := utils.FetchTools(g, toolGateway, "/namespace-b/server-c/mcp")
-				g.Expect(tools).To(Equal([]string{"echo", "get_info"}))
+				g.Expect(tools).To(Equal([]string{"echo"}))
 			}, 2*time.Minute, 5*time.Second).Should(Succeed(), "tools from server-c did not match")
 		})
 	})
@@ -85,8 +86,9 @@ var _ = Describe("ToolGateway", func() {
 		It("should echo a message via tools/call on /<namespace>/<server>/mcp", func() {
 			By("invoking the echo tool on server-a with a plain message")
 			Eventually(func(g Gomega) {
-				echoed := utils.CallTool(g, toolGateway, "/namespace-a/server-a/mcp", "echo",
+				echoed, err := utils.CallTool(g, toolGateway, "/namespace-a/server-a/mcp", "echo",
 					map[string]interface{}{"message": "hello from e2e test"})
+				g.Expect(err).NotTo(HaveOccurred(), "echo tool should not be rejected")
 				g.Expect(echoed).To(ContainSubstring("hello from e2e test"),
 					"echo tool should return the message verbatim")
 			}, 2*time.Minute, 5*time.Second).Should(Succeed(), "echo tool did not respond")
@@ -106,20 +108,73 @@ var _ = Describe("ToolGateway", func() {
 				}))
 			}, 2*time.Minute, 5*time.Second).Should(Succeed(), "namespace-a aggregate tools did not match")
 
-			By("listing tools from namespace-b aggregate endpoint")
+			By("listing tools from namespace-b aggregate endpoint (get_info filtered out)")
 			Eventually(func(g Gomega) {
 				tools := utils.FetchTools(g, toolGateway, "/namespace-b/mcp")
 				g.Expect(tools).To(Equal([]string{
 					"echo",
-					"get_info",
 				}))
 			}, 2*time.Minute, 5*time.Second).Should(Succeed(), "namespace-b aggregate tools did not match")
 		})
 	})
 
+	Describe("tool filter", func() {
+		It("should hide tools matched by ToolRoute.spec.toolFilter from individual, namespace, and root endpoints", func() {
+			By("verifying server-c's individual endpoint does not expose the denied get_info tool")
+			Eventually(func(g Gomega) {
+				tools := utils.FetchTools(g, toolGateway, "/namespace-b/server-c/mcp")
+				g.Expect(tools).NotTo(ContainElement("get_info"),
+					"get_info is denied by toolFilter and must not appear in tools/list")
+				g.Expect(tools).To(ContainElement("echo"),
+					"non-filtered tools must still be exposed")
+			}, 2*time.Minute, 5*time.Second).Should(Succeed(), "server-c filter not applied")
+
+			By("verifying namespace-b aggregate endpoint also hides get_info")
+			Eventually(func(g Gomega) {
+				tools := utils.FetchTools(g, toolGateway, "/namespace-b/mcp")
+				g.Expect(tools).NotTo(ContainElement("get_info"))
+				g.Expect(tools).NotTo(ContainElement(ContainSubstring("get_info")),
+					"prefixed variants of get_info must also be filtered out")
+			}, 2*time.Minute, 5*time.Second).Should(Succeed(), "namespace-b filter not applied")
+
+			By("verifying root aggregate endpoint also hides server-c's get_info (f63_get_info)")
+			Eventually(func(g Gomega) {
+				tools := utils.FetchTools(g, toolGateway, "/mcp")
+				g.Expect(tools).NotTo(ContainElement("f63_get_info"),
+					"prefixed variant of denied get_info must not appear in root aggregate")
+			}, 2*time.Minute, 5*time.Second).Should(Succeed(), "root aggregate filter not applied")
+
+			By("verifying tools/call to the denied tool on the per-route endpoint is rejected")
+			Eventually(func(g Gomega) {
+				_, err := utils.CallTool(g, toolGateway, "/namespace-b/server-c/mcp", "get_info",
+					map[string]interface{}{})
+				var rejected *utils.ToolCallRejected
+				g.Expect(errors.As(err, &rejected)).To(BeTrue(),
+					"expected gateway rejection, got: %v", err)
+				g.Expect(rejected.RPCError).NotTo(BeNil(),
+					"denied tool should be rejected via JSON-RPC error, got: %+v", rejected)
+				g.Expect(rejected.RPCError["message"]).To(ContainSubstring("Unknown tool"),
+					"denied tool should be rejected as if unknown, got: %v", rejected.RPCError)
+			}, 2*time.Minute, 5*time.Second).Should(Succeed(), "filtered tool call should have been rejected")
+
+			By("verifying tools/call to the prefixed denied tool on the root aggregate is rejected")
+			Eventually(func(g Gomega) {
+				_, err := utils.CallTool(g, toolGateway, "/mcp", "f63_get_info",
+					map[string]interface{}{})
+				var rejected *utils.ToolCallRejected
+				g.Expect(errors.As(err, &rejected)).To(BeTrue(),
+					"expected gateway rejection, got: %v", err)
+				g.Expect(rejected.RPCError).NotTo(BeNil(),
+					"denied tool should be rejected via JSON-RPC error, got: %+v", rejected)
+				g.Expect(rejected.RPCError["message"]).To(ContainSubstring("Unknown tool"),
+					"denied tool should be rejected as if unknown, got: %v", rejected.RPCError)
+			}, 2*time.Minute, 5*time.Second).Should(Succeed(), "filtered tool call on aggregate should have been rejected")
+		})
+	})
+
 	Describe("root aggregate endpoint", func() {
 		It("should aggregate all servers via /mcp", func() {
-			By("listing tools from the root aggregate endpoint")
+			By("listing tools from the root aggregate endpoint (server-c get_info filtered out)")
 			Eventually(func(g Gomega) {
 				tools := utils.FetchTools(g, toolGateway, "/mcp")
 				g.Expect(tools).To(Equal([]string{
@@ -128,7 +183,6 @@ var _ = Describe("ToolGateway", func() {
 					"7f6_echo",
 					"7f6_get_weather",
 					"f63_echo",
-					"f63_get_info",
 				}))
 			}, 2*time.Minute, 5*time.Second).Should(Succeed(), "root aggregate tools did not match")
 		})

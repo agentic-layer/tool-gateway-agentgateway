@@ -164,7 +164,8 @@ spec:
     - name: ECHO_TOOL_RESPONSE
       value: "Information available"
 
-# ToolRoute exposing server-c through test-tool-gateway
+# ToolRoute exposing server-c through test-tool-gateway with a tool filter
+# that hides "get_info" while leaving "echo" reachable.
 ---
 apiVersion: runtime.agentic-layer.ai/v1alpha1
 kind: ToolRoute
@@ -178,3 +179,6 @@ spec:
   upstream:
     toolServerRef:
       name: server-c
+  toolFilter:
+    deny:
+      - "get_info"
