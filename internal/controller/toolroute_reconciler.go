@@ -153,7 +153,7 @@ func (r *ToolRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 // assigned route path, a reason classifying which phase failed, and the
 // underlying error. Reason is empty on success.
 func (r *ToolRouteReconciler) reconcileToolRoute(ctx context.Context, route *agentruntimev1alpha1.ToolRoute, toolGateway *agentruntimev1alpha1.ToolGateway) (routePath string, reason string, err error) {
-	host, port, path, err := r.resolveUpstream(ctx, route)
+	host, port, path, err := resolveRouteUpstream(ctx, r.Client, route)
 	if err != nil {
 		return "", reasonToolRouteUpstreamUnresolved, err
 	}
@@ -174,8 +174,10 @@ func (r *ToolRouteReconciler) reconcileToolRoute(ctx context.Context, route *age
 	return routePath, "", nil
 }
 
-// resolveUpstream returns the MCP target host, port, and path derived from the route's upstream spec.
-func (r *ToolRouteReconciler) resolveUpstream(ctx context.Context, route *agentruntimev1alpha1.ToolRoute) (host string, port int32, path string, err error) {
+// resolveRouteUpstream returns the MCP target host, port, and path derived from the route's
+// upstream spec. Shared by ToolRouteReconciler (per-route backend) and ToolGatewayReconciler
+// (multiplex backend) so both produce identical target wiring for a given route.
+func resolveRouteUpstream(ctx context.Context, c client.Client, route *agentruntimev1alpha1.ToolRoute) (host string, port int32, path string, err error) {
 	switch {
 	case route.Spec.Upstream.ToolServerRef != nil:
 		ref := route.Spec.Upstream.ToolServerRef
@@ -184,7 +186,7 @@ func (r *ToolRouteReconciler) resolveUpstream(ctx context.Context, route *agentr
 			ns = route.Namespace
 		}
 		var ts agentruntimev1alpha1.ToolServer
-		if e := r.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: ns}, &ts); e != nil {
+		if e := c.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: ns}, &ts); e != nil {
 			return "", 0, "", fmt.Errorf("failed to resolve ToolServer %s/%s: %w", ns, ref.Name, e)
 		}
 		p := ts.Spec.Path
