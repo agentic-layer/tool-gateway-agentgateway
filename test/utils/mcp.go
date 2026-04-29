@@ -195,7 +195,9 @@ func CallTool(
 		"tools/call response is not valid JSON: %s", previewBody(parsedBody))
 	g.Expect(responseMap["jsonrpc"]).To(gomega.Equal("2.0"))
 
-	if rpcErr, ok := responseMap["error"].(map[string]interface{}); ok && rpcErr != nil {
+	if rawErr, hasErr := responseMap["error"]; hasErr && rawErr != nil {
+		rpcErr, ok := rawErr.(map[string]interface{})
+		g.Expect(ok).To(gomega.BeTrue(), "JSON-RPC error field is present but not an object: %v", rawErr)
 		return "", &ToolCallRejected{RPCError: rpcErr, BodyPreview: previewBody(parsedBody)}
 	}
 
