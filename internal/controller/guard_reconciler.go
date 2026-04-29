@@ -34,6 +34,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	agentruntimev1alpha1 "github.com/agentic-layer/agent-runtime-operator/api/v1alpha1"
@@ -334,6 +335,34 @@ func (r *GuardReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.ConfigMap{}).
 		Owns(&corev1.Service{}).
+		Watches(
+			&agentruntimev1alpha1.GuardrailProvider{},
+			handler.EnqueueRequestsFromMapFunc(r.findGuardsForProvider),
+		).
 		Named(GuardAdapterControllerName).
 		Complete(r)
+}
+
+// findGuardsForProvider re-enqueues every Guard whose ProviderRef resolves
+// to the changed GuardrailProvider.
+func (r *GuardReconciler) findGuardsForProvider(ctx context.Context, obj client.Object) []ctrl.Request {
+	provider, ok := obj.(*agentruntimev1alpha1.GuardrailProvider)
+	if !ok {
+		return nil
+	}
+	var guards agentruntimev1alpha1.GuardList
+	if err := r.List(ctx, &guards); err != nil {
+		return nil
+	}
+	var reqs []ctrl.Request
+	for _, g := range guards.Items {
+		ns := g.Spec.ProviderRef.Namespace
+		if ns == "" {
+			ns = g.Namespace
+		}
+		if g.Spec.ProviderRef.Name == provider.Name && ns == provider.Namespace {
+			reqs = append(reqs, ctrl.Request{NamespacedName: types.NamespacedName{Name: g.Name, Namespace: g.Namespace}})
+		}
+	}
+	return reqs
 }
