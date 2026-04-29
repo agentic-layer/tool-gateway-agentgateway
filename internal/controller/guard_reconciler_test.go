@@ -24,6 +24,7 @@ import (
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -144,6 +145,30 @@ var _ = Describe("GuardReconciler", func() {
 		Expect(dep.Spec.Template.Annotations[configHashAnnotation]).NotTo(BeEmpty())
 	})
 
+	It("re-renders the ConfigMap and rolls the Deployment when the provider's baseUrl changes", func() {
+		provider := createProvider()
+		createGuard()
+
+		var depBefore appsv1.Deployment
+		Eventually(func() error {
+			return k8sClient.Get(ctx, types.NamespacedName{Name: guardName + "-adapter", Namespace: ns}, &depBefore)
+		}, "5s", "100ms").Should(Succeed())
+		hashBefore := depBefore.Spec.Template.Annotations[configHashAnnotation]
+		Expect(hashBefore).NotTo(BeEmpty())
+
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: providerName, Namespace: ns}, provider)).To(Succeed())
+		provider.Spec.Presidio.BaseUrl = "http://presidio-v2.svc:8080"
+		Expect(k8sClient.Update(ctx, provider)).To(Succeed())
+
+		Eventually(func() string {
+			var dep appsv1.Deployment
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: guardName + "-adapter", Namespace: ns}, &dep); err != nil {
+				return ""
+			}
+			return dep.Spec.Template.Annotations[configHashAnnotation]
+		}, "5s", "100ms").ShouldNot(Equal(hashBefore))
+	})
+
 	It("creates a Service exposing port 80 → containerPort 9001 with h2c appProtocol", func() {
 		createProvider()
 		createGuard()
@@ -164,6 +189,65 @@ var _ = Describe("GuardReconciler", func() {
 		Expect(svc.Spec.Ports[0].AppProtocol).NotTo(BeNil())
 		Expect(*svc.Spec.Ports[0].AppProtocol).To(Equal("kubernetes.io/h2c"))
 		Expect(svc.Spec.Selector).To(HaveKeyWithValue("app", guardName+"-adapter"))
+	})
+
+	It("sets Ready=False/ProviderNotFound when the providerRef does not resolve", func() {
+		g := &agentruntimev1alpha1.Guard{
+			ObjectMeta: metav1.ObjectMeta{Name: guardName, Namespace: ns},
+			Spec: agentruntimev1alpha1.GuardSpec{
+				Mode:        []agentruntimev1alpha1.GuardMode{agentruntimev1alpha1.GuardModePreCall},
+				ProviderRef: corev1.ObjectReference{Name: "missing-provider"},
+			},
+		}
+		Expect(k8sClient.Create(ctx, g)).To(Succeed())
+
+		Eventually(func(gomega Gomega) {
+			var guard agentruntimev1alpha1.Guard
+			gomega.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: guardName, Namespace: ns}, &guard)).To(Succeed())
+			cond := metaConditionReason(guard.Status.Conditions, guardReadyType)
+			gomega.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			gomega.Expect(cond.Reason).To(Equal(guardReasonProviderNotFound))
+		}, "5s", "100ms").Should(Succeed())
+
+		var cm corev1.ConfigMap
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: guardName + "-adapter", Namespace: ns}, &cm)
+		Expect(apierrors.IsNotFound(err)).To(BeTrue())
+	})
+
+	It("sets Ready=False/UnsupportedProviderType for non-presidio providers", func() {
+		p := &agentruntimev1alpha1.GuardrailProvider{
+			ObjectMeta: metav1.ObjectMeta{Name: providerName, Namespace: ns},
+			Spec: agentruntimev1alpha1.GuardrailProviderSpec{
+				Type: "openai-moderation-api",
+			},
+		}
+		Expect(k8sClient.Create(ctx, p)).To(Succeed())
+		createGuard()
+
+		Eventually(func(gomega Gomega) {
+			var guard agentruntimev1alpha1.Guard
+			gomega.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: guardName, Namespace: ns}, &guard)).To(Succeed())
+			cond := metaConditionReason(guard.Status.Conditions, guardReadyType)
+			gomega.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			gomega.Expect(cond.Reason).To(Equal(guardReasonUnsupportedProviderType))
+		}, "5s", "100ms").Should(Succeed())
+	})
+
+	It("sets Ready=False/AdapterNotConfigured when --guardrail-adapter-image is empty", func() {
+		original := guardReconciler.AdapterImage
+		guardReconciler.AdapterImage = ""
+		defer func() { guardReconciler.AdapterImage = original }()
+
+		createProvider()
+		createGuard()
+
+		Eventually(func(gomega Gomega) {
+			var guard agentruntimev1alpha1.Guard
+			gomega.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: guardName, Namespace: ns}, &guard)).To(Succeed())
+			cond := metaConditionReason(guard.Status.Conditions, guardReadyType)
+			gomega.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			gomega.Expect(cond.Reason).To(Equal(guardReasonAdapterNotConfigured))
+		}, "5s", "100ms").Should(Succeed())
 	})
 
 	AfterEach(func() {
