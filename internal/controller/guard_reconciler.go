@@ -21,13 +21,16 @@ import (
 	"errors"
 	"fmt"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	kevents "k8s.io/client-go/tools/events"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -158,8 +161,14 @@ func (r *GuardReconciler) reconcileGuard(ctx context.Context, guard *agentruntim
 		return guardReasonReconcileFailed, err.Error(), err
 	}
 
-	// configHash is consumed by the Deployment template in Task 2.5.
-	_ = configHash
+	if err := r.ensureDeployment(ctx, guard, configHash); err != nil {
+		return guardReasonReconcileFailed, err.Error(), err
+	}
+
+	if err := r.ensureService(ctx, guard); err != nil {
+		return guardReasonReconcileFailed, err.Error(), err
+	}
+
 	return "", "", nil
 }
 
@@ -190,6 +199,104 @@ func (r *GuardReconciler) ensureConfigMap(ctx context.Context, guard *agentrunti
 	}
 	logf.FromContext(ctx).Info("ConfigMap reconciled", "operation", op, "name", cm.Name)
 	return nil
+}
+
+func (r *GuardReconciler) ensureDeployment(ctx context.Context, guard *agentruntimev1alpha1.Guard, configHash string) error {
+	name := adapterName(guard)
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: guard.Namespace},
+	}
+	labels := map[string]string{"app": name}
+	op, err := controllerutil.CreateOrPatch(ctx, r.Client, dep, func() error {
+		if err := controllerutil.SetControllerReference(guard, dep, r.Scheme); err != nil {
+			return err
+		}
+		dep.Spec.Replicas = ptr.To[int32](1)
+		dep.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
+		dep.Spec.Template.ObjectMeta.Labels = labels
+		if dep.Spec.Template.ObjectMeta.Annotations == nil {
+			dep.Spec.Template.ObjectMeta.Annotations = map[string]string{}
+		}
+		dep.Spec.Template.ObjectMeta.Annotations[configHashAnnotation] = configHash
+		dep.Spec.Template.Spec = corev1.PodSpec{
+			AutomountServiceAccountToken: ptr.To(false),
+			Containers: []corev1.Container{{
+				Name:            "guardrail-adapter",
+				Image:           r.AdapterImage,
+				ImagePullPolicy: corev1.PullIfNotPresent,
+				Args: []string{
+					fmt.Sprintf("--addr=:%d", adapterContainerPort),
+					fmt.Sprintf("--health-addr=:%d", adapterHealthPort),
+				},
+				Ports: []corev1.ContainerPort{
+					{Name: "ext-proc", ContainerPort: adapterContainerPort},
+					{Name: "health", ContainerPort: adapterHealthPort},
+				},
+				Env: []corev1.EnvVar{
+					{Name: "GUARDRAIL_CONFIG_FILE", Value: "/etc/guardrail/config.yaml"},
+				},
+				VolumeMounts: []corev1.VolumeMount{
+					{Name: "guardrail-config", MountPath: "/etc/guardrail", ReadOnly: true},
+				},
+				ReadinessProbe: httpProbe(adapterHealthPort, 3, 5),
+				LivenessProbe:  httpProbe(adapterHealthPort, 15, 10),
+			}},
+			Volumes: []corev1.Volume{{
+				Name: "guardrail-config",
+				VolumeSource: corev1.VolumeSource{
+					ConfigMap: &corev1.ConfigMapVolumeSource{
+						LocalObjectReference: corev1.LocalObjectReference{Name: name},
+					},
+				},
+			}},
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to ensure Deployment: %w", err)
+	}
+	logf.FromContext(ctx).Info("Deployment reconciled", "operation", op, "name", dep.Name)
+	return nil
+}
+
+func (r *GuardReconciler) ensureService(ctx context.Context, guard *agentruntimev1alpha1.Guard) error {
+	name := adapterName(guard)
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: guard.Namespace},
+	}
+	op, err := controllerutil.CreateOrPatch(ctx, r.Client, svc, func() error {
+		if err := controllerutil.SetControllerReference(guard, svc, r.Scheme); err != nil {
+			return err
+		}
+		h2c := "kubernetes.io/h2c"
+		svc.Spec.Selector = map[string]string{"app": name}
+		svc.Spec.Ports = []corev1.ServicePort{{
+			Name:        "ext-proc",
+			Port:        AdapterServicePort,
+			TargetPort:  intstr.FromInt(adapterContainerPort),
+			Protocol:    corev1.ProtocolTCP,
+			AppProtocol: &h2c,
+		}}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to ensure Service: %w", err)
+	}
+	logf.FromContext(ctx).Info("Service reconciled", "operation", op, "name", svc.Name)
+	return nil
+}
+
+func httpProbe(port int, initialDelay, period int32) *corev1.Probe {
+	return &corev1.Probe{
+		ProbeHandler: corev1.ProbeHandler{
+			HTTPGet: &corev1.HTTPGetAction{
+				Path: "/health",
+				Port: intstr.FromInt(port),
+			},
+		},
+		InitialDelaySeconds: initialDelay,
+		PeriodSeconds:       period,
+	}
 }
 
 func (r *GuardReconciler) fetchProvider(ctx context.Context, guard *agentruntimev1alpha1.Guard) (*agentruntimev1alpha1.GuardrailProvider, error) {
@@ -224,6 +331,9 @@ func (r *GuardReconciler) setReadyCondition(ctx context.Context, guard *agentrun
 func (r *GuardReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&agentruntimev1alpha1.Guard{}).
+		Owns(&appsv1.Deployment{}).
+		Owns(&corev1.ConfigMap{}).
+		Owns(&corev1.Service{}).
 		Named(GuardAdapterControllerName).
 		Complete(r)
 }
