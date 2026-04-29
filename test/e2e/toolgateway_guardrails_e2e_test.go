@@ -17,6 +17,7 @@ limitations under the License.
 package e2e
 
 import (
+	"errors"
 	"os/exec"
 	"time"
 
@@ -37,7 +38,7 @@ var guardrailsGateway = utils.ServiceTarget{
 var _ = Describe("ToolGateway with Guardrails", Ordered, func() {
 
 	BeforeAll(func() {
-		By("applying guardrails kustomization (Presidio, guardrail-adapter, ToolGateway, Guard, ToolServer)")
+		By("applying guardrails kustomization (Presidio, ToolGateway, Guard, ToolServer)")
 		_, err := utils.Run(exec.Command("kubectl", "apply", "-k", guardrailsKustomizeDir))
 		Expect(err).NotTo(HaveOccurred(), "Failed to apply guardrails kustomization")
 	})
@@ -55,26 +56,71 @@ var _ = Describe("ToolGateway with Guardrails", Ordered, func() {
 		}
 	})
 
-	It("masks PII in MCP tool responses routed through the guarded gateway", func() {
-		const piiMessage = "My name is John Smith and my email is john.smith@example.com."
+	Describe("individual server endpoints", func() {
+		It("should expose individual server tools via /<namespace>/<server>/mcp", func() {
+			By("listing tools from echo-server")
+			Eventually(func(g Gomega) {
+				tools := utils.FetchTools(g, guardrailsGateway, "/default/echo-server/mcp")
+				g.Expect(tools).To(Equal([]string{"echo", "get_weather"}))
+			}, 5*time.Minute, 10*time.Second).Should(Succeed(), "tools from echo-server did not match")
 
-		By("calling the echo tool with PII content via the guarded gateway")
-		var echoed string
-		Eventually(func(g Gomega) {
-			echoed, err := utils.CallTool(g, guardrailsGateway, "/default/echo-server/mcp", "echo",
-				map[string]interface{}{"message": piiMessage})
-			g.Expect(err).NotTo(HaveOccurred(), "echo tool should not be rejected")
-			g.Expect(echoed).NotTo(BeEmpty(), "echo tool returned empty content")
-		}, 3*time.Minute, 10*time.Second).Should(Succeed(), "echo tool did not return a response")
+			By("listing tools from filtered-server (get_info is filtered out via ToolRoute.spec.toolFilter)")
+			Eventually(func(g Gomega) {
+				tools := utils.FetchTools(g, guardrailsGateway, "/default/filtered-server/mcp")
+				g.Expect(tools).To(Equal([]string{"echo"}))
+			}, 2*time.Minute, 5*time.Second).Should(Succeed(), "tools from filtered-server did not match")
+		})
+	})
 
-		By("verifying PII is masked with Presidio placeholders in the response")
-		Expect(echoed).To(MatchRegexp(`<PERSON[^>]*>`),
-			"name should be replaced with <PERSON> placeholder")
-		Expect(echoed).To(MatchRegexp(`<EMAIL_ADDRESS[^>]*>`),
-			"email should be replaced with <EMAIL_ADDRESS> placeholder")
-		Expect(echoed).NotTo(ContainSubstring("John Smith"),
-			"original name must not be present in the response")
-		Expect(echoed).NotTo(ContainSubstring("john.smith@example.com"),
-			"original email must not be present in the response")
+	Describe("tool invocation", func() {
+		It("should mask PII in MCP tool responses routed through the guarded gateway", func() {
+			const piiMessage = "My name is John Smith and my email is john.smith@example.com."
+
+			By("calling the echo tool with PII content via the guarded gateway")
+			var echoed string
+			Eventually(func(g Gomega) {
+				result, err := utils.CallTool(g, guardrailsGateway, "/default/echo-server/mcp", "echo",
+					map[string]interface{}{"message": piiMessage})
+				g.Expect(err).NotTo(HaveOccurred(), "echo tool should not be rejected")
+				g.Expect(result).NotTo(BeEmpty(), "echo tool returned empty content")
+				echoed = result
+			}, 3*time.Minute, 10*time.Second).Should(Succeed(), "echo tool did not return a response")
+
+			By("verifying PII is masked with Presidio placeholders in the response")
+			Expect(echoed).To(MatchRegexp(`<PERSON[^>]*>`),
+				"name should be replaced with <PERSON> placeholder")
+			Expect(echoed).To(MatchRegexp(`<EMAIL_ADDRESS[^>]*>`),
+				"email should be replaced with <EMAIL_ADDRESS> placeholder")
+			Expect(echoed).NotTo(ContainSubstring("John Smith"),
+				"original name must not be present in the response")
+			Expect(echoed).NotTo(ContainSubstring("john.smith@example.com"),
+				"original email must not be present in the response")
+		})
+	})
+
+	Describe("tool filter", func() {
+		It("should hide tools matched by ToolRoute.spec.toolFilter on the per-route endpoint", func() {
+			By("verifying filtered-server's individual endpoint does not expose the denied get_info tool")
+			Eventually(func(g Gomega) {
+				tools := utils.FetchTools(g, guardrailsGateway, "/default/filtered-server/mcp")
+				g.Expect(tools).NotTo(ContainElement("get_info"),
+					"get_info is denied by toolFilter and must not appear in tools/list")
+				g.Expect(tools).To(ContainElement("echo"),
+					"non-filtered tools must still be exposed")
+			}, 2*time.Minute, 5*time.Second).Should(Succeed(), "filtered-server filter not applied")
+
+			By("verifying tools/call to the denied tool on the per-route endpoint is rejected")
+			Eventually(func(g Gomega) {
+				_, err := utils.CallTool(g, guardrailsGateway, "/default/filtered-server/mcp", "get_info",
+					map[string]interface{}{})
+				var rejected *utils.ToolCallRejected
+				g.Expect(errors.As(err, &rejected)).To(BeTrue(),
+					"expected gateway rejection, got: %v", err)
+				g.Expect(rejected.RPCError).NotTo(BeNil(),
+					"denied tool should be rejected via JSON-RPC error, got: %+v", rejected)
+				g.Expect(rejected.RPCError["message"]).To(ContainSubstring("Unknown tool"),
+					"denied tool should be rejected as if unknown, got: %v", rejected.RPCError)
+			}, 2*time.Minute, 5*time.Second).Should(Succeed(), "filtered tool call should have been rejected")
+		})
 	})
 })
