@@ -461,7 +461,7 @@ AGENT_RUNTIME_GIT_REF := $(shell \
 		echo "refs/tags/$$version"; \
 	fi)
 AGENT_RUNTIME_CRD_BASE_URL = https://raw.githubusercontent.com/agentic-layer/agent-runtime-operator/$(AGENT_RUNTIME_GIT_REF)/config/crd/bases
-AGENT_RUNTIME_CRD_FILES = runtime.agentic-layer.ai_toolgateways.yaml runtime.agentic-layer.ai_toolgatewayclasses.yaml runtime.agentic-layer.ai_toolservers.yaml runtime.agentic-layer.ai_toolroutes.yaml
+AGENT_RUNTIME_CRD_FILES = runtime.agentic-layer.ai_toolgateways.yaml runtime.agentic-layer.ai_toolgatewayclasses.yaml runtime.agentic-layer.ai_toolservers.yaml runtime.agentic-layer.ai_toolroutes.yaml runtime.agentic-layer.ai_guards.yaml runtime.agentic-layer.ai_guardrailproviders.yaml
 AGENT_RUNTIME_CRDS = $(addprefix $(AGENT_RUNTIME_CRD_DIR)/,$(AGENT_RUNTIME_CRD_FILES))
 AGENT_RUNTIME_VERSION_FILE = $(AGENT_RUNTIME_CRD_DIR)/.version
 

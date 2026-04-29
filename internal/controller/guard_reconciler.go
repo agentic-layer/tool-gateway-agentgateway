@@ -1,14 +1,27 @@
 /*
 Copyright 2026.
+
 Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 */
 
 package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -17,6 +30,7 @@ import (
 	kevents "k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	agentruntimev1alpha1 "github.com/agentic-layer/agent-runtime-operator/api/v1alpha1"
@@ -128,9 +142,54 @@ func (r *GuardReconciler) reconcileGuard(ctx context.Context, guard *agentruntim
 		return guardReasonReconcileFailed, err.Error(), err
 	}
 
-	// TODO Phase 2.x: render config, ensure CM, Deployment, Service.
-	_ = provider
+	configYAML, configHash, err := renderStaticConfig(guard, provider)
+	if err != nil {
+		switch {
+		case errors.Is(err, errUnsupportedProvider):
+			return guardReasonUnsupportedProviderType, err.Error(), err
+		case errors.Is(err, errInvalidConfig):
+			return guardReasonInvalidConfig, err.Error(), err
+		default:
+			return guardReasonReconcileFailed, err.Error(), err
+		}
+	}
+
+	if err := r.ensureConfigMap(ctx, guard, configYAML); err != nil {
+		return guardReasonReconcileFailed, err.Error(), err
+	}
+
+	// configHash is consumed by the Deployment template in Task 2.5.
+	_ = configHash
 	return "", "", nil
+}
+
+// adapterName returns the shared name for the per-Guard adapter triple.
+func adapterName(guard *agentruntimev1alpha1.Guard) string {
+	return guard.Name + "-adapter"
+}
+
+func (r *GuardReconciler) ensureConfigMap(ctx context.Context, guard *agentruntimev1alpha1.Guard, configYAML []byte) error {
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      adapterName(guard),
+			Namespace: guard.Namespace,
+		},
+	}
+	op, err := controllerutil.CreateOrPatch(ctx, r.Client, cm, func() error {
+		if err := controllerutil.SetControllerReference(guard, cm, r.Scheme); err != nil {
+			return err
+		}
+		if cm.Data == nil {
+			cm.Data = map[string]string{}
+		}
+		cm.Data[staticConfigKey] = string(configYAML)
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to ensure ConfigMap: %w", err)
+	}
+	logf.FromContext(ctx).Info("ConfigMap reconciled", "operation", op, "name", cm.Name)
+	return nil
 }
 
 func (r *GuardReconciler) fetchProvider(ctx context.Context, guard *agentruntimev1alpha1.Guard) (*agentruntimev1alpha1.GuardrailProvider, error) {
