@@ -67,15 +67,13 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
-	var guardrailAdapter controller.GuardrailAdapter
+	var guardrailAdapterImage string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
-	flag.StringVar(&guardrailAdapter.Name, "guardrail-adapter-name", "guardrail-adapter",
-		"The name of the guardrail-adapter service. Set to empty to disable guardrail support.")
-	flag.StringVar(&guardrailAdapter.Namespace, "guardrail-adapter-namespace", "guardrails",
-		"The namespace of the guardrail-adapter service. Empty means the ToolGateway's own namespace.")
-	flag.IntVar(&guardrailAdapter.Port, "guardrail-adapter-port", 80, "The port of the guardrail-adapter service.")
+	flag.StringVar(&guardrailAdapterImage, "guardrail-adapter-image", "",
+		"Container image used for per-Guard adapter Deployments (e.g. ghcr.io/agentic-layer/guardrail-adapter:0.1.0). "+
+			"If empty, Guards become Ready=False/AdapterNotConfigured.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
@@ -214,10 +212,9 @@ func main() {
 	}
 
 	if err = (&controller.ToolGatewayReconciler{
-		Client:           mgr.GetClient(),
-		Scheme:           mgr.GetScheme(),
-		Recorder:         mgr.GetEventRecorder("tool-gateway-agentgateway-controller"),
-		GuardrailAdapter: guardrailAdapter,
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorder("tool-gateway-agentgateway-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ToolGateway")
 		os.Exit(1)
@@ -228,6 +225,15 @@ func main() {
 		Recorder: mgr.GetEventRecorder("toolroute-agentgateway-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ToolRoute")
+		os.Exit(1)
+	}
+	if err = (&controller.GuardReconciler{
+		Client:       mgr.GetClient(),
+		Scheme:       mgr.GetScheme(),
+		Recorder:     mgr.GetEventRecorder("guard-adapter-controller"),
+		AdapterImage: guardrailAdapterImage,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Guard")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder

@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
@@ -26,6 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	kevents "k8s.io/client-go/tools/events"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -54,21 +56,28 @@ const (
 	reasonAgentgatewayParametersFailed = "AgentgatewayParametersReconciliationFailed"
 	reasonGatewayFailed                = "GatewayReconciliationFailed"
 	reasonGuardrailsFailed             = "GuardrailsReconciliationFailed"
+	reasonGuardNotFound                = "GuardNotFound"
+	reasonGuardNotReady                = "GuardNotReady"
+)
+
+// Sentinels classifying guardrail-related errors so reconcileToolGateway can
+// pick the right Ready=False reason.
+var (
+	errGuardNotFound = errors.New("guard not found")
+	errGuardNotReady = errors.New("guard not ready")
 )
 
 // ToolGatewayReconciler reconciles a ToolGateway object
 type ToolGatewayReconciler struct {
 	client.Client
-	Scheme           *runtime.Scheme
-	Recorder         kevents.EventRecorder
-	GuardrailAdapter GuardrailAdapter
+	Scheme   *runtime.Scheme
+	Recorder kevents.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=runtime.agentic-layer.ai,resources=toolgateways,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=runtime.agentic-layer.ai,resources=toolgateways/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=runtime.agentic-layer.ai,resources=toolgatewayclasses,verbs=get;list;watch
 // +kubebuilder:rbac:groups=runtime.agentic-layer.ai,resources=guards,verbs=get;list;watch
-// +kubebuilder:rbac:groups=runtime.agentic-layer.ai,resources=guardrailproviders,verbs=get;list;watch
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=agentgateway.dev,resources=agentgatewayparameters,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=agentgateway.dev,resources=agentgatewaypolicies,verbs=get;list;watch;create;update;patch;delete
@@ -139,7 +148,14 @@ func (r *ToolGatewayReconciler) reconcileToolGateway(ctx context.Context, toolGa
 	}
 
 	if err := r.ensureGuardrails(ctx, toolGateway); err != nil {
-		return reasonGuardrailsFailed, err
+		switch {
+		case errors.Is(err, errGuardNotFound):
+			return reasonGuardNotFound, err
+		case errors.Is(err, errGuardNotReady):
+			return reasonGuardNotReady, err
+		default:
+			return reasonGuardrailsFailed, err
+		}
 	}
 
 	return "", nil
@@ -409,38 +425,27 @@ func (r *ToolGatewayReconciler) findToolGatewayForGuardrailProvider(ctx context.
 	return requests
 }
 
-// ensureGuardrails creates, updates, or deletes the AgentgatewayPolicy for guardrails
+// ensureGuardrails creates, updates, or deletes the AgentgatewayPolicy for guardrails.
+// The policy points the ext_proc backendRef at the per-Guard adapter Service
+// reconciled by GuardReconciler in the Guard's own namespace; no metadataContext
+// is needed because the adapter loads its config from a ConfigMap.
 func (r *ToolGatewayReconciler) ensureGuardrails(ctx context.Context, toolGateway *agentruntimev1alpha1.ToolGateway) error {
 	log := logf.FromContext(ctx)
 
 	policyName := toolGateway.Name + "-guardrail"
 	policy := newAgentgatewayPolicy(policyName, toolGateway.Namespace)
 
-	// If no guardrails are configured, delete the policy if it exists
+	// 1. No guardrails configured: ensure no policy exists.
 	if len(toolGateway.Spec.Guardrails) == 0 {
 		if err := r.Delete(ctx, policy); err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("failed to delete guardrail policy: %w", err)
 		}
-		log.Info("Deleted guardrail policy (no guardrails configured)")
-		// Clear any GuardrailsUnsupported condition
 		apimeta.RemoveStatusCondition(&toolGateway.Status.Conditions, "GuardrailsUnsupported")
+		log.Info("Deleted guardrail policy (no guardrails configured)")
 		return nil
 	}
 
-	// Check if adapter name is configured
-	if r.GuardrailAdapter.Name == "" {
-		// Set status condition
-		apimeta.SetStatusCondition(&toolGateway.Status.Conditions, metav1.Condition{
-			Type:               "GuardrailsUnsupported",
-			Status:             metav1.ConditionTrue,
-			Reason:             "AdapterNameNotConfigured",
-			Message:            "Guardrails configured but --guardrail-adapter-name flag is not set",
-			ObservedGeneration: toolGateway.Generation,
-		})
-		return fmt.Errorf("guardrails configured but adapter name is not set")
-	}
-
-	// Check for multiple guards (currently not supported)
+	// 2. Multi-guard: not supported by agentgateway (one ext_proc slot per target).
 	if len(toolGateway.Spec.Guardrails) > 1 {
 		apimeta.SetStatusCondition(&toolGateway.Status.Conditions, metav1.Condition{
 			Type:               "GuardrailsUnsupported",
@@ -452,52 +457,76 @@ func (r *ToolGatewayReconciler) ensureGuardrails(ctx context.Context, toolGatewa
 		return fmt.Errorf("multiple guards not supported")
 	}
 
-	// Resolve guardrail metadata
-	metadata, err := r.resolveGuardrails(ctx, toolGateway)
-	if err != nil {
-		apimeta.SetStatusCondition(&toolGateway.Status.Conditions, metav1.Condition{
-			Type:               "GuardrailsUnsupported",
-			Status:             metav1.ConditionTrue,
-			Reason:             "GuardResolutionFailed",
-			Message:            fmt.Sprintf("Failed to resolve guard: %v", err),
-			ObservedGeneration: toolGateway.Generation,
-		})
-		return fmt.Errorf("failed to resolve guardrails: %w", err)
+	// 3. Resolve the referenced Guard.
+	ref := toolGateway.Spec.Guardrails[0]
+	guardNS := ref.Namespace
+	if guardNS == "" {
+		guardNS = toolGateway.Namespace
+	}
+	var guard agentruntimev1alpha1.Guard
+	if err := r.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: guardNS}, &guard); err != nil {
+		if apierrors.IsNotFound(err) {
+			return fmt.Errorf("%w: %s/%s", errGuardNotFound, guardNS, ref.Name)
+		}
+		return fmt.Errorf("failed to get guard %s/%s: %w", guardNS, ref.Name, err)
 	}
 
-	// Create or update the policy
+	// 4. Surface Guard's own Ready condition. We require Guard=Ready before
+	//    wiring the policy so traffic isn't routed to a half-configured adapter.
+	if cond := apimeta.FindStatusCondition(guard.Status.Conditions, "Ready"); cond == nil || cond.Status != metav1.ConditionTrue {
+		if cond != nil {
+			return fmt.Errorf("%w: %s/%s: %s — %s", errGuardNotReady, guardNS, ref.Name, cond.Reason, cond.Message)
+		}
+		return fmt.Errorf("%w: %s/%s has no Ready condition yet", errGuardNotReady, guardNS, ref.Name)
+	}
+
+	// 5. Build and apply the policy.
 	op, err := controllerutil.CreateOrPatch(ctx, r.Client, policy, func() error {
-		// Set owner reference for automatic cleanup
 		if err := controllerutil.SetControllerReference(toolGateway, policy, r.Scheme); err != nil {
 			return err
 		}
-
-		policySpec := buildGuardrailPolicySpec(toolGateway.Name, r.GuardrailAdapter, metadata)
-		if err := unstructured.SetNestedMap(policy.Object, policySpec, "spec"); err != nil {
-			return fmt.Errorf("failed to set policy spec: %w", err)
-		}
-
-		return nil
+		spec := buildGuardrailPolicySpec(toolGateway.Name, ref.Name, guardNS)
+		return unstructured.SetNestedMap(policy.Object, spec, "spec")
 	})
-
 	if err != nil {
 		return fmt.Errorf("failed to create or update guardrail policy: %w", err)
 	}
 
-	log.Info("Guardrail policy reconciled", "operation", op, "name", policy.GetName())
-
-	// Record event
 	switch op {
 	case controllerutil.OperationResultCreated:
-		r.Recorder.Eventf(toolGateway, nil, "Normal", "GuardrailPolicyCreated", "GuardrailPolicyCreated",
+		r.emitNormalEvent(toolGateway, "GuardrailPolicyCreated", "CreateGuardrailPolicy",
 			"Created guardrail policy %s", policy.GetName())
 	case controllerutil.OperationResultUpdated:
-		r.Recorder.Eventf(toolGateway, nil, "Normal", "GuardrailPolicyUpdated", "GuardrailPolicyUpdated",
+		r.emitNormalEvent(toolGateway, "GuardrailPolicyUpdated", "UpdateGuardrailPolicy",
 			"Updated guardrail policy %s", policy.GetName())
 	}
-
-	// Clear any GuardrailsUnsupported condition on success
 	apimeta.RemoveStatusCondition(&toolGateway.Status.Conditions, "GuardrailsUnsupported")
-
+	log.Info("Guardrail policy reconciled", "operation", op, "name", policy.GetName())
 	return nil
+}
+
+// buildGuardrailPolicySpec builds the AgentgatewayPolicy spec map. The ext_proc
+// backendRef points at the per-Guard adapter Service ("<guard>-adapter") in the
+// Guard's own namespace; failureMode is FailClosed so traffic is blocked when
+// the adapter is unreachable.
+func buildGuardrailPolicySpec(toolGatewayName, guardName, guardNamespace string) map[string]interface{} {
+	return map[string]interface{}{
+		"targetRefs": []interface{}{
+			map[string]interface{}{
+				"group": "gateway.networking.k8s.io",
+				"kind":  "Gateway",
+				"name":  toolGatewayName,
+			},
+		},
+		"traffic": map[string]interface{}{
+			"extProc": map[string]interface{}{
+				"backendRef": map[string]interface{}{
+					"name":      guardName + "-adapter",
+					"namespace": guardNamespace,
+					"port":      int64(AdapterServicePort),
+				},
+				"failureMode": "FailClosed",
+			},
+		},
+	}
 }
