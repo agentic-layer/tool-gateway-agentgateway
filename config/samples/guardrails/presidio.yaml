@@ -1,0 +1,67 @@
+# Presidio PII detection service for local and e2e testing.
+# Deploys a single Presidio container that provides both analyzer and anonymizer
+# under one URL (presidio.guardrail-providers:80).
+# Referenced from GuardrailProvider.spec.presidio.baseUrl.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: guardrail-providers
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: presidio
+  namespace: guardrail-providers
+  labels:
+    app: presidio
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: presidio
+  template:
+    metadata:
+      labels:
+        app: presidio
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: presidio
+          image: ghcr.io/agentic-layer/presidio:0.3.1
+          ports:
+            - containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+              ephemeral-storage: "2Gi"
+            limits:
+              cpu: "1"
+              memory: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: presidio
+  namespace: guardrail-providers
+spec:
+  selector:
+    app: presidio
+  ports:
+    - port: 80
+      targetPort: 8000
