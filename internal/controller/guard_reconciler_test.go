@@ -22,6 +22,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -106,6 +107,63 @@ var _ = Describe("GuardReconciler", func() {
 			g.Expect(cond.Status).To(Equal(metav1.ConditionTrue))
 			g.Expect(cond.Reason).To(Equal(guardReasonReconciled))
 		}, "5s", "100ms").Should(Succeed())
+	})
+
+	It("creates a Deployment with the operator's adapter image and the config mounted", func() {
+		createProvider()
+		createGuard()
+
+		var dep appsv1.Deployment
+		Eventually(func() error {
+			return k8sClient.Get(ctx, types.NamespacedName{
+				Name:      guardName + "-adapter",
+				Namespace: ns,
+			}, &dep)
+		}, "5s", "100ms").Should(Succeed())
+
+		Expect(dep.OwnerReferences).To(HaveLen(1))
+		Expect(dep.OwnerReferences[0].Name).To(Equal(guardName))
+		Expect(dep.Spec.Template.Spec.Containers).To(HaveLen(1))
+		c := dep.Spec.Template.Spec.Containers[0]
+		Expect(c.Image).To(Equal("ghcr.io/agentic-layer/guardrail-adapter:test"))
+		Expect(c.Args).To(ContainElements(
+			fmt.Sprintf("--addr=:%d", adapterContainerPort),
+			fmt.Sprintf("--health-addr=:%d", adapterHealthPort),
+		))
+		Expect(c.Env).To(ContainElement(corev1.EnvVar{
+			Name: "GUARDRAIL_CONFIG_FILE", Value: "/etc/guardrail/config.yaml",
+		}))
+		Expect(c.VolumeMounts).To(ContainElement(corev1.VolumeMount{
+			Name:      "guardrail-config",
+			MountPath: "/etc/guardrail",
+			ReadOnly:  true,
+		}))
+		Expect(dep.Spec.Template.Spec.Volumes).To(ContainElement(HaveField("Name", "guardrail-config")))
+
+		Expect(dep.Spec.Template.Annotations).To(HaveKey(configHashAnnotation))
+		Expect(dep.Spec.Template.Annotations[configHashAnnotation]).NotTo(BeEmpty())
+	})
+
+	It("creates a Service exposing port 80 → containerPort 9001 with h2c appProtocol", func() {
+		createProvider()
+		createGuard()
+
+		var svc corev1.Service
+		Eventually(func() error {
+			return k8sClient.Get(ctx, types.NamespacedName{
+				Name:      guardName + "-adapter",
+				Namespace: ns,
+			}, &svc)
+		}, "5s", "100ms").Should(Succeed())
+
+		Expect(svc.OwnerReferences).To(HaveLen(1))
+		Expect(svc.OwnerReferences[0].Name).To(Equal(guardName))
+		Expect(svc.Spec.Ports).To(HaveLen(1))
+		Expect(svc.Spec.Ports[0].Port).To(Equal(int32(AdapterServicePort)))
+		Expect(svc.Spec.Ports[0].TargetPort.IntValue()).To(Equal(adapterContainerPort))
+		Expect(svc.Spec.Ports[0].AppProtocol).NotTo(BeNil())
+		Expect(*svc.Spec.Ports[0].AppProtocol).To(Equal("kubernetes.io/h2c"))
+		Expect(svc.Spec.Selector).To(HaveKeyWithValue("app", guardName+"-adapter"))
 	})
 
 	AfterEach(func() {
