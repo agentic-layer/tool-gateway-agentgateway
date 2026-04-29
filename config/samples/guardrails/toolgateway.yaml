@@ -68,9 +68,9 @@ spec:
     - name: ECHO_SERVER_NAME
       value: "Echo Server"
     - name: ECHO_TOOL_NAME
-      value: "echo"
+      value: "get_weather"
     - name: ECHO_TOOL_RESPONSE
-      value: "Echo response"
+      value: "Sunny, 72°F"
 ---
 apiVersion: runtime.agentic-layer.ai/v1alpha1
 kind: ToolRoute
@@ -84,3 +84,39 @@ spec:
   upstream:
     toolServerRef:
       name: echo-server
+
+---
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: ToolServer
+metadata:
+  name: filtered-server
+  namespace: default
+spec:
+  protocol: mcp
+  transportType: http
+  image: ghcr.io/agentic-layer/echo-mcp-server:0.3.0
+  port: 8000
+  replicas: 1
+  env:
+    - name: ECHO_SERVER_NAME
+      value: "Filtered Server"
+    - name: ECHO_TOOL_NAME
+      value: "get_info"
+    - name: ECHO_TOOL_RESPONSE
+      value: "Information available"
+---
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: ToolRoute
+metadata:
+  name: filtered-server
+  namespace: default
+spec:
+  toolGatewayRef:
+    name: test-tool-gateway
+    namespace: default
+  upstream:
+    toolServerRef:
+      name: filtered-server
+  toolFilter:
+    deny:
+      - "get_info"

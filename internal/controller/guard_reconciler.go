@@ -235,6 +235,7 @@ func (r *GuardReconciler) ensureDeployment(ctx context.Context, guard *agentrunt
 				},
 				Env: []corev1.EnvVar{
 					{Name: "GUARDRAIL_CONFIG_FILE", Value: "/etc/guardrail/config.yaml"},
+					{Name: "LOG_LEVEL", Value: "info"},
 				},
 				VolumeMounts: []corev1.VolumeMount{
 					{Name: "guardrail-config", MountPath: "/etc/guardrail", ReadOnly: true},
