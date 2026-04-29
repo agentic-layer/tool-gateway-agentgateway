@@ -174,9 +174,8 @@ func (r *ToolRouteReconciler) reconcileToolRoute(ctx context.Context, route *age
 	return routePath, "", nil
 }
 
-// resolveRouteUpstream returns the MCP target host, port, and path derived from the route's
-// upstream spec. Shared by ToolRouteReconciler (per-route backend) and ToolGatewayReconciler
-// (multiplex backend) so both produce identical target wiring for a given route.
+// resolveRouteUpstream returns the MCP target host, port, and path derived from
+// the route's upstream spec.
 func resolveRouteUpstream(ctx context.Context, c client.Client, route *agentruntimev1alpha1.ToolRoute) (host string, port int32, path string, err error) {
 	switch {
 	case route.Spec.Upstream.ToolServerRef != nil:
