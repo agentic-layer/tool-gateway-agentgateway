@@ -240,8 +240,8 @@ Once deployed, tools are accessible via the ToolGateway's Gateway:
 # Get the Gateway service endpoint (example for 'my-tool-gateway')
 kubectl get svc -n my-namespace | grep my-tool-gateway
 
-# Access your tool via the gateway
-curl http://<gateway-endpoint>/mcp
+# Access your tool via its ToolRoute path (see ToolRoute.status.url)
+curl http://<gateway-endpoint>/<route-namespace>/<route-name>/mcp
 ```
 
 ## End-to-End (E2E) Testing

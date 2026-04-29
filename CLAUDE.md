@@ -19,7 +19,7 @@ Reference Documentation
 │   └── samples/          # Example ToolGateway and ToolRoute resources
 ├── internal/
 │   └── controller/       # Reconciliation logic
-│       ├── toolgateway_reconciler.go  # Reconciles ToolGateway (Gateway + AgentgatewayParameters + multiplex routes)
+│       ├── toolgateway_reconciler.go  # Reconciles ToolGateway (Gateway + AgentgatewayParameters)
 │       ├── toolroute_reconciler.go    # Reconciles ToolRoute (per-route Backend + HTTPRoute + optional Policy)
 │       ├── toolroute_authz.go         # Translates glob tool-filter to AgentgatewayPolicy CEL rules
 │       └── resources.go               # Shared unstructured helpers
@@ -30,6 +30,6 @@ Reference Documentation
 
 ### Architecture
 
-- **ToolGatewayReconciler** owns gateway-wide concerns: the `Gateway` resource, `AgentgatewayParameters` (env/envFrom/telemetry translation), and multiplex `HTTPRoute`s (`/mcp` and `/<ns>/mcp`) that aggregate every `ToolServer` exposed to this gateway via a `ToolRoute`.
+- **ToolGatewayReconciler** owns gateway-wide concerns: the `Gateway` resource and `AgentgatewayParameters` (env/envFrom/telemetry translation).
 - **ToolRouteReconciler** owns per-route concerns: for each `ToolRoute` it resolves the upstream (cluster `ToolServer` service or external URL), ensures an `AgentgatewayBackend`, an `HTTPRoute` at `/<route-ns>/<route-name>/mcp`, and — when `spec.toolFilter` is set — an `AgentgatewayPolicy` whose `spec.backend.mcp.authorization.policy.matchExpressions` carries CEL rules translated from glob allow/deny patterns. Populates `ToolRoute.status.url`.
 - **Class ownership** is enforced the same way in both reconcilers: the `ToolGatewayClass` of the referenced `ToolGateway` must carry this operator's controller string, or be the default class when none is specified.
