@@ -1,6 +1,10 @@
-# ToolGateway deployment with guardrails using Presidio for PII detection.
-# Deployed together with Presidio and the guardrail-adapter via the sibling
-# kustomization.yaml in this folder.
+# Guard + GuardrailProvider + ToolGateway sample.
+#
+# The operator's GuardReconciler creates a per-Guard adapter Deployment
+# (named "<guard>-adapter") in this namespace; you do not need to deploy
+# the guardrail-adapter yourself.
+#
+# Apply with:  kubectl apply -k config/samples/guardrails
 ---
 apiVersion: runtime.agentic-layer.ai/v1alpha1
 kind: GuardrailProvider

@@ -234,16 +234,39 @@ The reachable URL is written to `ToolRoute.status.url` and is what consumers rea
 
 ### Guardrail Configuration
 
-The operator supports adding guardrails to your ToolGateway to filter sensitive information (PII, harmful content) from tool traffic. Guardrails are implemented via the [guardrail-adapter](https://github.com/agentic-layer/guardrail-adapter) using agentgateway's ext_proc support.
+The operator supports adding guardrails to your ToolGateway to filter sensitive
+content (PII, harmful content) from tool traffic. For each `Guard` you create,
+the operator automatically deploys a dedicated `guardrail-adapter` instance
+pre-configured from the `Guard` and its `GuardrailProvider` — no manual adapter
+deployment required.
 
 #### Prerequisites
 
-1. **guardrail-adapter** must be deployed in your cluster
-2. Configure the operator to point at the adapter Service (defaults shown):
-   - `--guardrail-adapter-name=guardrail-adapter` (set to empty to disable guardrails)
-   - `--guardrail-adapter-namespace=guardrails` (empty means same namespace as the ToolGateway)
-   - `--guardrail-adapter-port=80`
-3. Deploy a **GuardrailProvider** (Presidio, OpenAI Moderation, or AWS Bedrock)
+1. The operator must be started with `--guardrail-adapter-image=<image:tag>`.
+   The shipped `install.yaml` already pins a known-compatible adapter version.
+   If you build your own kustomize overlay, set the image via:
+
+   ```yaml
+   patches:
+     - target: { kind: Deployment, name: controller-manager, namespace: tool-gateway-agentgateway-system }
+       patch: |-
+         apiVersion: apps/v1
+         kind: Deployment
+         metadata:
+           name: controller-manager
+         spec:
+           template:
+             spec:
+               containers:
+                 - name: manager
+                   args:
+                     - --leader-elect
+                     - --health-probe-bind-address=:8081
+                     - --guardrail-adapter-image=ghcr.io/agentic-layer/guardrail-adapter:0.1.0
+   ```
+
+2. A `GuardrailProvider` backing service (e.g. Presidio) must be reachable from
+   the cluster.
 
 #### Example: PII Detection with Presidio
 
@@ -283,8 +306,8 @@ spec:
       PERSON: "0.8"           # Higher threshold for person names
       EMAIL_ADDRESS: "0.7"
     entityActions:
-      PERSON: "MASK"          # Replace with [PERSON]
-      EMAIL_ADDRESS: "MASK"   # Replace with [EMAIL_ADDRESS]
+      PERSON: "MASK"          # Replace with <PERSON>
+      EMAIL_ADDRESS: "MASK"   # Replace with <EMAIL_ADDRESS>
       CREDIT_CARD: "BLOCK"    # Reject requests with credit cards
       PHONE_NUMBER: "MASK"
 ```
@@ -303,18 +326,31 @@ spec:
     - name: pii-guard
 ```
 
-The operator will automatically create an **AgentgatewayPolicy** with ext_proc configuration targeting the guardrail-adapter.
+The operator creates `pii-guard-adapter` (`Deployment` + `ConfigMap` + `Service`)
+in the Guard's namespace and wires the `ToolGateway`'s `AgentgatewayPolicy`
+`extProc.backendRef` at it automatically.
 
 #### Limitations
 
 - **Single Guard per ToolGateway**: Agentgateway currently supports only one ext_proc slot per target. If you specify multiple guards, the operator will set a `GuardrailsUnsupported` status condition.
-- **Adapter Required**: If you reference guardrails but the operator is started with an empty `--guardrail-adapter-name`, a status condition will indicate the issue.
+- **Presidio only**: Only `presidio-api` providers are supported today. Guards with `openai-moderation-api` or `bedrock-api` providers become `Ready=False/UnsupportedProviderType`.
 
 #### Failure Mode
 
 Guardrails use `FailClosed` mode by default: if the adapter is unavailable, traffic is **blocked** (safer for sensitive data). This differs from MCP backends which use `FailOpen` (availability over filtering).
 
-See `config/samples/guardrails/` for a complete example. Apply it with `kubectl apply -k config/samples/guardrails` to deploy Presidio, the guardrail-adapter, and a configured ToolGateway in one step.
+#### Status conditions
+
+| Resource | Condition | Reason | Meaning |
+|---|---|---|---|
+| `Guard` | `Ready=False` | `AdapterNotConfigured` | Operator started without `--guardrail-adapter-image` |
+| `Guard` | `Ready=False` | `ProviderNotFound` | `providerRef` does not resolve |
+| `Guard` | `Ready=False` | `UnsupportedProviderType` | Only `presidio-api` is supported today |
+| `Guard` | `Ready=False` | `InvalidConfig` | Validation failed (missing endpoint, empty modes, etc.) |
+| `ToolGateway` | `Ready=False` | `GuardNotFound` | The referenced Guard does not exist |
+| `ToolGateway` | `Ready=False` | `GuardNotReady` | The Guard exists but its Ready condition is False |
+
+See `config/samples/guardrails/` for a complete example. Apply it with `kubectl apply -k config/samples/guardrails` to deploy Presidio and a configured ToolGateway in one step.
 
 ### Accessing Your Tools
 
