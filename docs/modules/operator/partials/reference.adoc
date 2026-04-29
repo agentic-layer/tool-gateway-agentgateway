@@ -179,19 +179,11 @@ Semantics:
 * If both are set, **deny wins on conflict** — a tool matching any `deny` pattern is always blocked, even if it also matches an `allow` pattern.
 * Patterns use standard glob syntax (`*` matches any substring, `?` matches a single character).
 
-== Multiplex Routes
-
-In addition to per-`ToolRoute` paths, the operator creates multiplex MCP routes on each `ToolGateway` that aggregate every `ToolServer` exposed via a `ToolRoute`:
-
-* `/mcp` — aggregates all `ToolServer`s (across all namespaces) that are exposed through this gateway via a `ToolRoute`.
-* `/<namespace>/mcp` — aggregates all exposed `ToolServer`s in a specific namespace.
-* `/<route-namespace>/<route-name>/mcp` — the per-`ToolRoute` path that routes to a single upstream.
-
 == How it Works
 
 The Tool Gateway agentgateway Operator creates and manages Gateway API resources based on `ToolGateway`, `ToolRoute`, and `ToolServer` custom resources:
 
-. **Gateway creation**: When a `ToolGateway` is created, the operator creates a dedicated `Gateway` with the same name in the same namespace as the `ToolGateway`, with an HTTP listener on port 80. Each `ToolGateway` has its own `Gateway` instance. The operator also owns the `AgentgatewayParameters` (env/envFrom/telemetry translation) and the multiplex `HTTPRoute`s (`/mcp` and `/<ns>/mcp`).
+. **Gateway creation**: When a `ToolGateway` is created, the operator creates a dedicated `Gateway` with the same name in the same namespace as the `ToolGateway`, with an HTTP listener on port 80. Each `ToolGateway` has its own `Gateway` instance. The operator also owns the `AgentgatewayParameters` (env/envFrom/telemetry translation).
 
 . **ToolRoute integration**: For each `ToolRoute` resource, the operator creates:
 ** **AgentgatewayBackend** — configures the MCP backend connection to the route's upstream (a cluster `ToolServer` service or an external URL).
@@ -200,7 +192,7 @@ The Tool Gateway agentgateway Operator creates and manages Gateway API resources
 
 . **ToolServer**: Describes how an MCP server is deployed. It is consumed by `ToolRoute.spec.upstream.toolServerRef`; exposure through a gateway is always driven by a `ToolRoute`.
 
-. **Automatic updates**: The operator watches `ToolGateway`, `ToolRoute`, and `ToolServer` resources and updates the corresponding Gateway API resources automatically. Changes to a `ToolServer`'s port or path propagate to the backends of any `ToolRoute` that references it, and to the multiplex routes of the owning `ToolGateway`.
+. **Automatic updates**: The operator watches `ToolGateway`, `ToolRoute`, and `ToolServer` resources and updates the corresponding Gateway API resources automatically. Changes to a `ToolServer`'s port or path propagate to the backends of any `ToolRoute` that references it.
 
 === Architecture
 
