@@ -454,5 +454,177 @@ var _ = Describe("ToolGateway Controller", func() {
 			Expect(found).To(BeTrue())
 			Expect(serviceType).To(Equal("ClusterIP"))
 		})
+
+		It("should set Ready=False/GuardNotFound when the guardrail does not resolve", func() {
+			toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-class-guardnotfound"},
+				Spec:       agentruntimev1alpha1.ToolGatewayClassSpec{Controller: "runtime.agentic-layer.ai/tool-gateway-agentgateway-controller"},
+			}
+			Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
+
+			toolGateway := &agentruntimev1alpha1.ToolGateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "tg-guard-missing", Namespace: "default"},
+				Spec: agentruntimev1alpha1.ToolGatewaySpec{
+					ToolGatewayClassName: "test-class-guardnotfound",
+					Guardrails: []corev1.ObjectReference{
+						{Name: "missing-guard"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, toolGateway)).To(Succeed())
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Name: toolGateway.Name, Namespace: toolGateway.Namespace}, &agentruntimev1alpha1.ToolGateway{})
+			}, "5s", "100ms").Should(Succeed())
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: toolGateway.Name, Namespace: toolGateway.Namespace},
+			})
+			Expect(err).To(HaveOccurred())
+
+			Eventually(func(g Gomega) {
+				var got agentruntimev1alpha1.ToolGateway
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: toolGateway.Name, Namespace: toolGateway.Namespace}, &got)).To(Succeed())
+				cond := apimeta.FindStatusCondition(got.Status.Conditions, readyConditionType)
+				g.Expect(cond).NotTo(BeNil())
+				g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+				g.Expect(cond.Reason).To(Equal(reasonGuardNotFound))
+			}, "5s", "100ms").Should(Succeed())
+		})
+
+		It("should set Ready=False/GuardNotReady when the Guard exists but is NotReady", func() {
+			toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-class-guardnotready"},
+				Spec:       agentruntimev1alpha1.ToolGatewayClassSpec{Controller: "runtime.agentic-layer.ai/tool-gateway-agentgateway-controller"},
+			}
+			Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
+
+			// Provider with an unsupported type drives the Guard to Ready=False/UnsupportedProviderType.
+			provider := &agentruntimev1alpha1.GuardrailProvider{
+				ObjectMeta: metav1.ObjectMeta{Name: "openai-prov", Namespace: "default"},
+				Spec:       agentruntimev1alpha1.GuardrailProviderSpec{Type: "openai-moderation-api"},
+			}
+			Expect(k8sClient.Create(ctx, provider)).To(Succeed())
+
+			guard := &agentruntimev1alpha1.Guard{
+				ObjectMeta: metav1.ObjectMeta{Name: "unsupported-guard", Namespace: "default"},
+				Spec: agentruntimev1alpha1.GuardSpec{
+					Mode:        []agentruntimev1alpha1.GuardMode{agentruntimev1alpha1.GuardModePreCall},
+					ProviderRef: corev1.ObjectReference{Name: "openai-prov"},
+				},
+			}
+			Expect(k8sClient.Create(ctx, guard)).To(Succeed())
+
+			Eventually(func(g Gomega) {
+				var got agentruntimev1alpha1.Guard
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: guard.Name, Namespace: guard.Namespace}, &got)).To(Succeed())
+				cond := apimeta.FindStatusCondition(got.Status.Conditions, "Ready")
+				g.Expect(cond).NotTo(BeNil())
+				g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			}, "5s", "100ms").Should(Succeed())
+
+			toolGateway := &agentruntimev1alpha1.ToolGateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "tg-guard-notready", Namespace: "default"},
+				Spec: agentruntimev1alpha1.ToolGatewaySpec{
+					ToolGatewayClassName: "test-class-guardnotready",
+					Guardrails: []corev1.ObjectReference{
+						{Name: "unsupported-guard"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, toolGateway)).To(Succeed())
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Name: toolGateway.Name, Namespace: toolGateway.Namespace}, &agentruntimev1alpha1.ToolGateway{})
+			}, "5s", "100ms").Should(Succeed())
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: toolGateway.Name, Namespace: toolGateway.Namespace},
+			})
+			Expect(err).To(HaveOccurred())
+
+			Eventually(func(g Gomega) {
+				var got agentruntimev1alpha1.ToolGateway
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: toolGateway.Name, Namespace: toolGateway.Namespace}, &got)).To(Succeed())
+				cond := apimeta.FindStatusCondition(got.Status.Conditions, readyConditionType)
+				g.Expect(cond).NotTo(BeNil())
+				g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+				g.Expect(cond.Reason).To(Equal(reasonGuardNotReady))
+			}, "5s", "100ms").Should(Succeed())
+		})
+
+		It("builds an AgentgatewayPolicy targeting the per-Guard adapter Service when the Guard is Ready", func() {
+			toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-class-policy"},
+				Spec:       agentruntimev1alpha1.ToolGatewayClassSpec{Controller: "runtime.agentic-layer.ai/tool-gateway-agentgateway-controller"},
+			}
+			Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
+
+			provider := &agentruntimev1alpha1.GuardrailProvider{
+				ObjectMeta: metav1.ObjectMeta{Name: "presidio-policy", Namespace: "default"},
+				Spec: agentruntimev1alpha1.GuardrailProviderSpec{
+					Type:     "presidio-api",
+					Presidio: &agentruntimev1alpha1.PresidioProviderConfig{BaseUrl: "http://presidio.svc:8080"},
+				},
+			}
+			Expect(k8sClient.Create(ctx, provider)).To(Succeed())
+
+			guard := &agentruntimev1alpha1.Guard{
+				ObjectMeta: metav1.ObjectMeta{Name: "ready-guard", Namespace: "default"},
+				Spec: agentruntimev1alpha1.GuardSpec{
+					Mode:        []agentruntimev1alpha1.GuardMode{agentruntimev1alpha1.GuardModePreCall},
+					ProviderRef: corev1.ObjectReference{Name: "presidio-policy"},
+				},
+			}
+			Expect(k8sClient.Create(ctx, guard)).To(Succeed())
+
+			Eventually(func(g Gomega) {
+				var got agentruntimev1alpha1.Guard
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: guard.Name, Namespace: guard.Namespace}, &got)).To(Succeed())
+				cond := apimeta.FindStatusCondition(got.Status.Conditions, "Ready")
+				g.Expect(cond).NotTo(BeNil())
+				g.Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+			}, "5s", "100ms").Should(Succeed())
+
+			toolGateway := &agentruntimev1alpha1.ToolGateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "tg-with-guard", Namespace: "default"},
+				Spec: agentruntimev1alpha1.ToolGatewaySpec{
+					ToolGatewayClassName: "test-class-policy",
+					Guardrails: []corev1.ObjectReference{
+						{Name: "ready-guard"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, toolGateway)).To(Succeed())
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Name: toolGateway.Name, Namespace: toolGateway.Namespace}, &agentruntimev1alpha1.ToolGateway{})
+			}, "5s", "100ms").Should(Succeed())
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: toolGateway.Name, Namespace: toolGateway.Namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			policy := &unstructured.Unstructured{}
+			policy.SetAPIVersion("agentgateway.dev/v1alpha1")
+			policy.SetKind("AgentgatewayPolicy")
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Name: toolGateway.Name + "-guardrail", Namespace: toolGateway.Namespace}, policy)
+			}, "5s", "100ms").Should(Succeed())
+
+			ref, found, err := unstructured.NestedMap(policy.Object, "spec", "traffic", "extProc", "backendRef")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(ref).To(HaveKeyWithValue("name", "ready-guard-adapter"))
+			Expect(ref).To(HaveKeyWithValue("namespace", "default"))
+			Expect(ref).To(HaveKeyWithValue("port", int64(AdapterServicePort)))
+
+			failureMode, found, err := unstructured.NestedString(policy.Object, "spec", "traffic", "extProc", "failureMode")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(failureMode).To(Equal("FailClosed"))
+
+			_, found, err = unstructured.NestedFieldCopy(policy.Object, "spec", "traffic", "extProc", "metadataContext")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeFalse())
+		})
 	})
 })
