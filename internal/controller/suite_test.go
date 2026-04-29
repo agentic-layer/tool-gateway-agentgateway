@@ -42,6 +42,7 @@ var k8sManager ctrl.Manager
 var testEnv *envtest.Environment
 var ctx context.Context
 var cancel context.CancelFunc
+var guardReconciler *GuardReconciler
 
 func TestControllers(t *testing.T) {
 	RegisterFailHandler(Fail)
@@ -77,6 +78,13 @@ var _ = BeforeSuite(func() {
 		Scheme: scheme.Scheme,
 	})
 	Expect(err).NotTo(HaveOccurred())
+
+	guardReconciler = &GuardReconciler{
+		Client:       k8sManager.GetClient(),
+		Scheme:       k8sManager.GetScheme(),
+		AdapterImage: "ghcr.io/agentic-layer/guardrail-adapter:test",
+	}
+	Expect(guardReconciler.SetupWithManager(k8sManager)).To(Succeed())
 
 	go func() {
 		defer GinkgoRecover()
