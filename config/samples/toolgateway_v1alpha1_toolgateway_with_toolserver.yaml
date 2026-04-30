@@ -23,18 +23,6 @@ kind: Namespace
 metadata:
   name: namespace-b
 
-# ToolGatewayClass - defines the controller implementation
----
-apiVersion: runtime.agentic-layer.ai/v1alpha1
-kind: ToolGatewayClass
-metadata:
-  name: agentgateway
-  namespace: tool-gateway
-  annotations:
-    toolgatewayclass.kubernetes.io/is-default-class: "true"
-spec:
-  controller: runtime.agentic-layer.ai/tool-gateway-agentgateway-controller
-
 # ConfigMap referenced by the ToolGateway envFrom
 ---
 apiVersion: v1

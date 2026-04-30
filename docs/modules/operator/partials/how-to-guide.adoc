@@ -116,7 +116,7 @@ spec:
     kind: OCIRepository
     name: tool-gateway-agentgateway
   interval: 10m
-  path: ./default
+  path: ./
   prune: true
   wait: true
   dependsOn:

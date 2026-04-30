@@ -21,10 +21,56 @@ import (
 
 	agentruntimev1alpha1 "github.com/agentic-layer/agent-runtime-operator/api/v1alpha1"
 	"github.com/onsi/gomega"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
+
+// defaultTestToolGatewayClassName matches the class shipped by the operator
+// install kustomization (config/install/toolgatewayclass.yaml). Tests use the
+// same name so that class lookups behave like a real cluster.
+const defaultTestToolGatewayClassName = "agentgateway"
+
+// createDefaultToolGatewayClass installs the production-realistic default
+// ToolGatewayClass: the conventional name, this operator's controller string,
+// and the is-default-class annotation. Any ToolGateway without an explicit
+// ToolGatewayClassName picks this one up.
+func createDefaultToolGatewayClass(ctx context.Context, k8sClient client.Client) {
+	class := &agentruntimev1alpha1.ToolGatewayClass{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: defaultTestToolGatewayClassName,
+			Annotations: map[string]string{
+				toolGatewayClassDefaultAnnotation: "true",
+			},
+		},
+		Spec: agentruntimev1alpha1.ToolGatewayClassSpec{
+			Controller: ToolGatewayAgentgatewayControllerName,
+		},
+	}
+	gomega.Expect(k8sClient.Create(ctx, class)).To(gomega.Succeed())
+}
+
+// cleanupToolGatewayClasses removes every ToolGatewayClass in the cluster.
+// ToolGatewayClasses are cluster-scoped, so this is the equivalent of
+// cleanupTestResources for that kind. Safe to call when none exist.
+func cleanupToolGatewayClasses(ctx context.Context, k8sClient client.Client) {
+	classList := &agentruntimev1alpha1.ToolGatewayClassList{}
+	gomega.Expect(k8sClient.List(ctx, classList)).To(gomega.Succeed())
+	for i := range classList.Items {
+		err := k8sClient.Delete(ctx, &classList.Items[i])
+		if err != nil && !apierrors.IsNotFound(err) {
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		}
+	}
+	// Wait for deletions to settle so the next test starts from a clean slate.
+	gomega.Eventually(func() int {
+		remaining := &agentruntimev1alpha1.ToolGatewayClassList{}
+		_ = k8sClient.List(ctx, remaining)
+		return len(remaining.Items)
+	}, "5s", "100ms").Should(gomega.Equal(0))
+}
 
 // cleanupTestResources cleans up all test resources in the specified namespace.
 // This is a shared utility function used by both ToolGateway and ToolRoute tests.
@@ -48,13 +94,6 @@ func cleanupTestResources(ctx context.Context, k8sClient client.Client, namespac
 	gomega.Expect(k8sClient.List(ctx, toolGatewayList, &client.ListOptions{Namespace: namespace})).To(gomega.Succeed())
 	for i := range toolGatewayList.Items {
 		_ = k8sClient.Delete(ctx, &toolGatewayList.Items[i])
-	}
-
-	// Clean up all tool gateway classes (cluster-scoped)
-	toolGatewayClassList := &agentruntimev1alpha1.ToolGatewayClassList{}
-	gomega.Expect(k8sClient.List(ctx, toolGatewayClassList)).To(gomega.Succeed())
-	for i := range toolGatewayClassList.Items {
-		_ = k8sClient.Delete(ctx, &toolGatewayClassList.Items[i])
 	}
 
 	// Clean up all HTTPRoutes in the namespace

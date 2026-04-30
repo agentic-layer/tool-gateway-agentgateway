@@ -3,6 +3,7 @@
 resources:
 - bases/tool-gateway-agentgateway.clusterserviceversion.yaml
 - ../default
+- ../install
 - ../samples
 - ../scorecard
 
