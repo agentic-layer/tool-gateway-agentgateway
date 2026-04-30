@@ -507,8 +507,7 @@ func (r *ToolGatewayReconciler) ensureGuardrails(ctx context.Context, toolGatewa
 
 // buildGuardrailPolicySpec builds the AgentgatewayPolicy spec map. The ext_proc
 // backendRef points at the per-Guard adapter Service ("<guard>-adapter") in the
-// Guard's own namespace; failureMode is FailClosed so traffic is blocked when
-// the adapter is unreachable.
+// Guard's own namespace.
 func buildGuardrailPolicySpec(toolGatewayName, guardName, guardNamespace string) map[string]interface{} {
 	return map[string]interface{}{
 		"targetRefs": []interface{}{
@@ -525,7 +524,6 @@ func buildGuardrailPolicySpec(toolGatewayName, guardName, guardNamespace string)
 					"namespace": guardNamespace,
 					"port":      int64(AdapterServicePort),
 				},
-				"failureMode": "FailClosed",
 			},
 		},
 	}

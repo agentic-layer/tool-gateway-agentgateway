@@ -617,11 +617,6 @@ var _ = Describe("ToolGateway Controller", func() {
 			Expect(ref).To(HaveKeyWithValue("namespace", "default"))
 			Expect(ref).To(HaveKeyWithValue("port", int64(AdapterServicePort)))
 
-			failureMode, found, err := unstructured.NestedString(policy.Object, "spec", "traffic", "extProc", "failureMode")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(found).To(BeTrue())
-			Expect(failureMode).To(Equal("FailClosed"))
-
 			_, found, err = unstructured.NestedFieldCopy(policy.Object, "spec", "traffic", "extProc", "metadataContext")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(found).To(BeFalse())
