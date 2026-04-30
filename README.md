@@ -262,7 +262,7 @@ deployment required.
                    args:
                      - --leader-elect
                      - --health-probe-bind-address=:8081
-                     - --guardrail-adapter-image=ghcr.io/agentic-layer/guardrail-adapter:0.1.0
+                     - --guardrail-adapter-image=ghcr.io/agentic-layer/guardrail-adapter:0.2.1
    ```
 
 2. A `GuardrailProvider` backing service (e.g. Presidio) must be reachable from
@@ -334,10 +334,6 @@ in the Guard's namespace and wires the `ToolGateway`'s `AgentgatewayPolicy`
 
 - **Single Guard per ToolGateway**: Agentgateway currently supports only one ext_proc slot per target. If you specify multiple guards, the operator will set a `GuardrailsUnsupported` status condition.
 - **Presidio only**: Only `presidio-api` providers are supported today. Guards with `openai-moderation-api` or `bedrock-api` providers become `Ready=False/UnsupportedProviderType`.
-
-#### Failure Mode
-
-Guardrails use `FailClosed` mode by default: if the adapter is unavailable, traffic is **blocked** (safer for sensitive data). This differs from MCP backends which use `FailOpen` (availability over filtering).
 
 #### Status conditions
 

@@ -26,6 +26,8 @@ import (
 	agentruntimev1alpha1 "github.com/agentic-layer/agent-runtime-operator/api/v1alpha1"
 )
 
+const maskAction = "MASK"
+
 func TestRenderStaticConfig_PresidioFull(t *testing.T) {
 	guard := &agentruntimev1alpha1.Guard{
 		ObjectMeta: metav1.ObjectMeta{Name: "pii-guard", Namespace: "default"},
@@ -42,8 +44,8 @@ func TestRenderStaticConfig_PresidioFull(t *testing.T) {
 					"ALL":    "0.5",
 				},
 				EntityActions: map[string]string{
-					"PERSON":        "MASK",
-					"EMAIL_ADDRESS": "MASK",
+					"PERSON":        maskAction,
+					"EMAIL_ADDRESS": maskAction,
 				},
 			},
 		},
@@ -97,13 +99,13 @@ func TestRenderStaticConfig_Deterministic(t *testing.T) {
 		thresholds := map[string]string{}
 		switch seed % 2 {
 		case 0:
-			actions["PERSON"] = "MASK"
-			actions["EMAIL_ADDRESS"] = "MASK"
+			actions["PERSON"] = maskAction
+			actions["EMAIL_ADDRESS"] = maskAction
 			thresholds["ALL"] = "0.5"
 			thresholds["PERSON"] = "0.8"
 		case 1:
-			actions["EMAIL_ADDRESS"] = "MASK"
-			actions["PERSON"] = "MASK"
+			actions["EMAIL_ADDRESS"] = maskAction
+			actions["PERSON"] = maskAction
 			thresholds["PERSON"] = "0.8"
 			thresholds["ALL"] = "0.5"
 		}

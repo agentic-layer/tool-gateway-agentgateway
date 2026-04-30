@@ -104,7 +104,7 @@ var _ = Describe("GuardReconciler", func() {
 		Eventually(func(g Gomega) {
 			var guard agentruntimev1alpha1.Guard
 			g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: guardName, Namespace: ns}, &guard)).To(Succeed())
-			cond := metaConditionReason(guard.Status.Conditions, guardReadyType)
+			cond := metaConditionReason(guard.Status.Conditions)
 			g.Expect(cond.Status).To(Equal(metav1.ConditionTrue))
 			g.Expect(cond.Reason).To(Equal(guardReasonReconciled))
 		}, "5s", "100ms").Should(Succeed())
@@ -204,7 +204,7 @@ var _ = Describe("GuardReconciler", func() {
 		Eventually(func(gomega Gomega) {
 			var guard agentruntimev1alpha1.Guard
 			gomega.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: guardName, Namespace: ns}, &guard)).To(Succeed())
-			cond := metaConditionReason(guard.Status.Conditions, guardReadyType)
+			cond := metaConditionReason(guard.Status.Conditions)
 			gomega.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			gomega.Expect(cond.Reason).To(Equal(guardReasonProviderNotFound))
 		}, "5s", "100ms").Should(Succeed())
@@ -227,7 +227,7 @@ var _ = Describe("GuardReconciler", func() {
 		Eventually(func(gomega Gomega) {
 			var guard agentruntimev1alpha1.Guard
 			gomega.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: guardName, Namespace: ns}, &guard)).To(Succeed())
-			cond := metaConditionReason(guard.Status.Conditions, guardReadyType)
+			cond := metaConditionReason(guard.Status.Conditions)
 			gomega.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			gomega.Expect(cond.Reason).To(Equal(guardReasonUnsupportedProviderType))
 		}, "5s", "100ms").Should(Succeed())
@@ -244,7 +244,7 @@ var _ = Describe("GuardReconciler", func() {
 		Eventually(func(gomega Gomega) {
 			var guard agentruntimev1alpha1.Guard
 			gomega.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: guardName, Namespace: ns}, &guard)).To(Succeed())
-			cond := metaConditionReason(guard.Status.Conditions, guardReadyType)
+			cond := metaConditionReason(guard.Status.Conditions)
 			gomega.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			gomega.Expect(cond.Reason).To(Equal(guardReasonAdapterNotConfigured))
 		}, "5s", "100ms").Should(Succeed())
@@ -257,10 +257,10 @@ var _ = Describe("GuardReconciler", func() {
 	})
 })
 
-// metaConditionReason returns the named condition or an empty struct.
-func metaConditionReason(conds []metav1.Condition, t string) metav1.Condition {
+// metaConditionReason returns the Ready condition or an empty struct.
+func metaConditionReason(conds []metav1.Condition) metav1.Condition {
 	for _, c := range conds {
-		if c.Type == t {
+		if c.Type == guardReadyType {
 			return c
 		}
 	}

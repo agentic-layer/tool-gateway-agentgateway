@@ -17,7 +17,6 @@ limitations under the License.
 package e2e
 
 import (
-	"errors"
 	"os/exec"
 	"time"
 
@@ -100,27 +99,7 @@ var _ = Describe("ToolGateway with Guardrails", Ordered, func() {
 
 	Describe("tool filter", func() {
 		It("should hide tools matched by ToolRoute.spec.toolFilter on the per-route endpoint", func() {
-			By("verifying filtered-server's individual endpoint does not expose the denied get_info tool")
-			Eventually(func(g Gomega) {
-				tools := utils.FetchTools(g, guardrailsGateway, "/default/filtered-server/mcp")
-				g.Expect(tools).NotTo(ContainElement("get_info"),
-					"get_info is denied by toolFilter and must not appear in tools/list")
-				g.Expect(tools).To(ContainElement("echo"),
-					"non-filtered tools must still be exposed")
-			}, 2*time.Minute, 5*time.Second).Should(Succeed(), "filtered-server filter not applied")
-
-			By("verifying tools/call to the denied tool on the per-route endpoint is rejected")
-			Eventually(func(g Gomega) {
-				_, err := utils.CallTool(g, guardrailsGateway, "/default/filtered-server/mcp", "get_info",
-					map[string]interface{}{})
-				var rejected *utils.ToolCallRejected
-				g.Expect(errors.As(err, &rejected)).To(BeTrue(),
-					"expected gateway rejection, got: %v", err)
-				g.Expect(rejected.RPCError).NotTo(BeNil(),
-					"denied tool should be rejected via JSON-RPC error, got: %+v", rejected)
-				g.Expect(rejected.RPCError["message"]).To(ContainSubstring("Unknown tool"),
-					"denied tool should be rejected as if unknown, got: %v", rejected.RPCError)
-			}, 2*time.Minute, 5*time.Second).Should(Succeed(), "filtered tool call should have been rejected")
+			verifyToolFilterBehavior(guardrailsGateway, "/default/filtered-server/mcp")
 		})
 	})
 })

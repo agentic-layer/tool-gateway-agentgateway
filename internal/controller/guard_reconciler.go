@@ -214,11 +214,11 @@ func (r *GuardReconciler) ensureDeployment(ctx context.Context, guard *agentrunt
 		}
 		dep.Spec.Replicas = ptr.To[int32](1)
 		dep.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
-		dep.Spec.Template.ObjectMeta.Labels = labels
-		if dep.Spec.Template.ObjectMeta.Annotations == nil {
-			dep.Spec.Template.ObjectMeta.Annotations = map[string]string{}
+		dep.Spec.Template.Labels = labels
+		if dep.Spec.Template.Annotations == nil {
+			dep.Spec.Template.Annotations = map[string]string{}
 		}
-		dep.Spec.Template.ObjectMeta.Annotations[configHashAnnotation] = configHash
+		dep.Spec.Template.Annotations[configHashAnnotation] = configHash
 		dep.Spec.Template.Spec = corev1.PodSpec{
 			AutomountServiceAccountToken: ptr.To(false),
 			Containers: []corev1.Container{{
@@ -270,14 +270,13 @@ func (r *GuardReconciler) ensureService(ctx context.Context, guard *agentruntime
 		if err := controllerutil.SetControllerReference(guard, svc, r.Scheme); err != nil {
 			return err
 		}
-		h2c := "kubernetes.io/h2c"
 		svc.Spec.Selector = map[string]string{"app": name}
 		svc.Spec.Ports = []corev1.ServicePort{{
 			Name:        "ext-proc",
 			Port:        AdapterServicePort,
-			TargetPort:  intstr.FromInt(adapterContainerPort),
+			TargetPort:  intstr.FromInt32(adapterContainerPort),
 			Protocol:    corev1.ProtocolTCP,
-			AppProtocol: &h2c,
+			AppProtocol: new("kubernetes.io/h2c"),
 		}}
 		return nil
 	})
@@ -293,7 +292,7 @@ func httpProbe(port int, initialDelay, period int32) *corev1.Probe {
 		ProbeHandler: corev1.ProbeHandler{
 			HTTPGet: &corev1.HTTPGetAction{
 				Path: "/health",
-				Port: intstr.FromInt(port),
+				Port: intstr.FromInt32(int32(port)),
 			},
 		},
 		InitialDelaySeconds: initialDelay,
