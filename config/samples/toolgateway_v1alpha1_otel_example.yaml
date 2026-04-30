@@ -13,18 +13,6 @@ kind: Namespace
 metadata:
   name: tool-gateway
 
-# ToolGatewayClass - defines the controller implementation
----
-apiVersion: runtime.agentic-layer.ai/v1alpha1
-kind: ToolGatewayClass
-metadata:
-  name: agentgateway
-  namespace: tool-gateway
-  annotations:
-    toolgatewayclass.kubernetes.io/is-default-class: "true"
-spec:
-  controller: runtime.agentic-layer.ai/tool-gateway-agentgateway-controller
-
 # ToolGateway with OTEL configuration
 # The OTEL env vars below will be translated to agentgateway's rawConfig.telemetry section
 ---
@@ -43,7 +31,7 @@ spec:
       value: "http/protobuf"
     - name: OTEL_EXPORTER_OTLP_HEADERS
       value: "api-key=my-secret-key,environment=production"
-    
+
     # Non-OTEL env vars - these will be passed through as-is
     - name: LOG_LEVEL
       value: "info"
@@ -84,7 +72,7 @@ spec:
       value: "http://otel-collector:4318"
     - name: OTEL_EXPORTER_OTLP_PROTOCOL
       value: "http/protobuf"
-    
+
     # Signal-specific configuration overrides
     - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
       value: "http://jaeger-collector:4318"
@@ -92,7 +80,7 @@ spec:
       value: "grpc"
     - name: OTEL_EXPORTER_OTLP_TRACES_HEADERS
       value: "trace-api-key=trace-secret"
-    
+
     # Regular env vars
     - name: SERVICE_NAME
       value: "my-service"

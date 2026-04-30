@@ -44,43 +44,20 @@ var _ = Describe("ToolGateway Controller", func() {
 			Scheme:   k8sClient.Scheme(),
 			Recorder: kevents.NewFakeRecorder(100),
 		}
+		createDefaultToolGatewayClass(ctx, k8sClient)
 	})
 
 	AfterEach(func() {
 		cleanupTestResources(ctx, k8sClient, "default")
+		cleanupToolGatewayClasses(ctx, k8sClient)
 	})
 
 	Describe("Reconcile", func() {
-		It("should create ToolGatewayClass", func() {
-			toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-class",
-				},
-				Spec: agentruntimev1alpha1.ToolGatewayClassSpec{
-					Controller: "runtime.agentic-layer.ai/tool-gateway-agentgateway-controller",
-				},
-			}
-			Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
-		})
-
 		It("should create ToolGateway and reconcile to create Gateway", func() {
-			toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-class-2",
-				},
-				Spec: agentruntimev1alpha1.ToolGatewayClassSpec{
-					Controller: "runtime.agentic-layer.ai/tool-gateway-agentgateway-controller",
-				},
-			}
-			Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
-
 			toolGateway := &agentruntimev1alpha1.ToolGateway{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-basic-gateway",
 					Namespace: "default",
-				},
-				Spec: agentruntimev1alpha1.ToolGatewaySpec{
-					ToolGatewayClassName: "test-class-2",
 				},
 			}
 			Expect(k8sClient.Create(ctx, toolGateway)).To(Succeed())
@@ -145,23 +122,10 @@ var _ = Describe("ToolGateway Controller", func() {
 		})
 
 		It("should restore Gateway to desired state after drift", func() {
-			toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-class-drift",
-				},
-				Spec: agentruntimev1alpha1.ToolGatewayClassSpec{
-					Controller: "runtime.agentic-layer.ai/tool-gateway-agentgateway-controller",
-				},
-			}
-			Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
-
 			toolGateway := &agentruntimev1alpha1.ToolGateway{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-drift-gateway",
 					Namespace: "default",
-				},
-				Spec: agentruntimev1alpha1.ToolGatewaySpec{
-					ToolGatewayClassName: "test-class-drift",
 				},
 			}
 			Expect(k8sClient.Create(ctx, toolGateway)).To(Succeed())
@@ -220,16 +184,12 @@ var _ = Describe("ToolGateway Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("should not reconcile ToolGateway with wrong controller", func() {
-			toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "wrong-controller-class",
-				},
-				Spec: agentruntimev1alpha1.ToolGatewayClassSpec{
-					Controller: "other-controller",
-				},
+		It("should not reconcile ToolGateway whose explicit class is owned by a different controller", func() {
+			foreignClass := &agentruntimev1alpha1.ToolGatewayClass{
+				ObjectMeta: metav1.ObjectMeta{Name: "wrong-controller-class"},
+				Spec:       agentruntimev1alpha1.ToolGatewayClassSpec{Controller: "other-controller"},
 			}
-			Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
+			Expect(k8sClient.Create(ctx, foreignClass)).To(Succeed())
 
 			toolGateway := &agentruntimev1alpha1.ToolGateway{
 				ObjectMeta: metav1.ObjectMeta{
@@ -250,6 +210,8 @@ var _ = Describe("ToolGateway Controller", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
+			// Even though a default class owned by this controller exists, the
+			// explicit className must NOT fall back to it. No Gateway is created.
 			gateway := &gatewayv1.Gateway{}
 			err = k8sClient.Get(ctx, types.NamespacedName{
 				Name:      "test-wrong-controller",
@@ -259,16 +221,9 @@ var _ = Describe("ToolGateway Controller", func() {
 		})
 
 		It("should pass spec.env through to AgentgatewayParameters", func() {
-			toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-class-env"},
-				Spec:       agentruntimev1alpha1.ToolGatewayClassSpec{Controller: "runtime.agentic-layer.ai/tool-gateway-agentgateway-controller"},
-			}
-			Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
-
 			toolGateway := &agentruntimev1alpha1.ToolGateway{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-env-gateway", Namespace: "default"},
 				Spec: agentruntimev1alpha1.ToolGatewaySpec{
-					ToolGatewayClassName: "test-class-env",
 					Env: []corev1.EnvVar{
 						{Name: "MY_VAR", Value: "my-value"},
 					},
@@ -303,16 +258,9 @@ var _ = Describe("ToolGateway Controller", func() {
 		})
 
 		It("should pass spec.envFrom through to AgentgatewayParameters deployment spec", func() {
-			toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-class-envfrom"},
-				Spec:       agentruntimev1alpha1.ToolGatewayClassSpec{Controller: "runtime.agentic-layer.ai/tool-gateway-agentgateway-controller"},
-			}
-			Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
-
 			toolGateway := &agentruntimev1alpha1.ToolGateway{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-envfrom-gateway", Namespace: "default"},
 				Spec: agentruntimev1alpha1.ToolGatewaySpec{
-					ToolGatewayClassName: "test-class-envfrom",
 					EnvFrom: []corev1.EnvFromSource{
 						{ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "my-config"}}},
 					},
@@ -348,16 +296,9 @@ var _ = Describe("ToolGateway Controller", func() {
 		})
 
 		It("should update AgentgatewayParameters when spec.env changes", func() {
-			toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-class-env-update"},
-				Spec:       agentruntimev1alpha1.ToolGatewayClassSpec{Controller: "runtime.agentic-layer.ai/tool-gateway-agentgateway-controller"},
-			}
-			Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
-
 			toolGateway := &agentruntimev1alpha1.ToolGateway{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-env-update-gateway", Namespace: "default"},
 				Spec: agentruntimev1alpha1.ToolGatewaySpec{
-					ToolGatewayClassName: "test-class-env-update",
 					Env: []corev1.EnvVar{
 						{Name: "MY_VAR", Value: "initial-value"},
 					},
@@ -425,16 +366,9 @@ var _ = Describe("ToolGateway Controller", func() {
 		})
 
 		It("should clear spec.rawConfig in AgentgatewayParameters when OTEL env vars are removed", func() {
-			toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-class-otel-remove"},
-				Spec:       agentruntimev1alpha1.ToolGatewayClassSpec{Controller: "runtime.agentic-layer.ai/tool-gateway-agentgateway-controller"},
-			}
-			Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
-
 			toolGateway := &agentruntimev1alpha1.ToolGateway{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-otel-remove-gateway", Namespace: "default"},
 				Spec: agentruntimev1alpha1.ToolGatewaySpec{
-					ToolGatewayClassName: "test-class-otel-remove",
 					Env: []corev1.EnvVar{
 						{Name: "OTEL_EXPORTER_OTLP_ENDPOINT", Value: "http://otel-collector:4318"},
 						{Name: "MY_VAR", Value: "my-value"},
@@ -495,17 +429,8 @@ var _ = Describe("ToolGateway Controller", func() {
 		})
 
 		It("should set Service type to ClusterIP in AgentgatewayParameters", func() {
-			toolGatewayClass := &agentruntimev1alpha1.ToolGatewayClass{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-class-service"},
-				Spec:       agentruntimev1alpha1.ToolGatewayClassSpec{Controller: "runtime.agentic-layer.ai/tool-gateway-agentgateway-controller"},
-			}
-			Expect(k8sClient.Create(ctx, toolGatewayClass)).To(Succeed())
-
 			toolGateway := &agentruntimev1alpha1.ToolGateway{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-service-gateway", Namespace: "default"},
-				Spec: agentruntimev1alpha1.ToolGatewaySpec{
-					ToolGatewayClassName: "test-class-service",
-				},
 			}
 			Expect(k8sClient.Create(ctx, toolGateway)).To(Succeed())
 			Eventually(func() error {

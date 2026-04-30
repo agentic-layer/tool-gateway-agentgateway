@@ -44,10 +44,12 @@ var _ = Describe("ToolRouteReconciler", func() {
 			Scheme:   k8sClient.Scheme(),
 			Recorder: kevents.NewFakeRecorder(100),
 		}
+		createDefaultToolGatewayClass(ctx, k8sClient)
 	})
 
 	AfterEach(func() {
 		cleanupTestResources(ctx, k8sClient, ns)
+		cleanupToolGatewayClasses(ctx, k8sClient)
 	})
 
 	// reconcile is a helper that waits for resources to be visible in the cached
@@ -60,11 +62,11 @@ var _ = Describe("ToolRouteReconciler", func() {
 	}
 
 	It("skips a ToolRoute whose ToolGateway class is not owned by this controller", func() {
-		otherClass := &agentruntimev1alpha1.ToolGatewayClass{
+		foreignClass := &agentruntimev1alpha1.ToolGatewayClass{
 			ObjectMeta: metav1.ObjectMeta{Name: "tr-other-class"},
 			Spec:       agentruntimev1alpha1.ToolGatewayClassSpec{Controller: "example.com/other"},
 		}
-		Expect(k8sClient.Create(ctx, otherClass)).To(Succeed())
+		Expect(k8sClient.Create(ctx, foreignClass)).To(Succeed())
 
 		tg := &agentruntimev1alpha1.ToolGateway{
 			ObjectMeta: metav1.ObjectMeta{Name: "foreign-tg", Namespace: ns},
@@ -97,15 +99,8 @@ var _ = Describe("ToolRouteReconciler", func() {
 	})
 
 	It("creates an AgentgatewayBackend and HTTPRoute for a cluster ToolServer upstream", func() {
-		ownClass := &agentruntimev1alpha1.ToolGatewayClass{
-			ObjectMeta: metav1.ObjectMeta{Name: "tr-own-class"},
-			Spec:       agentruntimev1alpha1.ToolGatewayClassSpec{Controller: ToolGatewayAgentgatewayControllerName},
-		}
-		Expect(k8sClient.Create(ctx, ownClass)).To(Succeed())
-
 		tg := &agentruntimev1alpha1.ToolGateway{
 			ObjectMeta: metav1.ObjectMeta{Name: "own-tg", Namespace: ns},
-			Spec:       agentruntimev1alpha1.ToolGatewaySpec{ToolGatewayClassName: "tr-own-class"},
 		}
 		Expect(k8sClient.Create(ctx, tg)).To(Succeed())
 
@@ -161,15 +156,8 @@ var _ = Describe("ToolRouteReconciler", func() {
 	})
 
 	It("creates a backend with a static host for an external upstream", func() {
-		ownClass := &agentruntimev1alpha1.ToolGatewayClass{
-			ObjectMeta: metav1.ObjectMeta{Name: "tr-own-class-ext"},
-			Spec:       agentruntimev1alpha1.ToolGatewayClassSpec{Controller: ToolGatewayAgentgatewayControllerName},
-		}
-		Expect(k8sClient.Create(ctx, ownClass)).To(Succeed())
-
 		tg := &agentruntimev1alpha1.ToolGateway{
 			ObjectMeta: metav1.ObjectMeta{Name: "own-tg-ext", Namespace: ns},
-			Spec:       agentruntimev1alpha1.ToolGatewaySpec{ToolGatewayClassName: "tr-own-class-ext"},
 		}
 		Expect(k8sClient.Create(ctx, tg)).To(Succeed())
 
@@ -202,15 +190,8 @@ var _ = Describe("ToolRouteReconciler", func() {
 	})
 
 	It("creates an AgentgatewayPolicy with CEL rules when toolFilter is set, and deletes it when filter is cleared", func() {
-		ownClass := &agentruntimev1alpha1.ToolGatewayClass{
-			ObjectMeta: metav1.ObjectMeta{Name: "tr-own-class-filter"},
-			Spec:       agentruntimev1alpha1.ToolGatewayClassSpec{Controller: ToolGatewayAgentgatewayControllerName},
-		}
-		Expect(k8sClient.Create(ctx, ownClass)).To(Succeed())
-
 		tg := &agentruntimev1alpha1.ToolGateway{
 			ObjectMeta: metav1.ObjectMeta{Name: "own-tg-filter", Namespace: ns},
-			Spec:       agentruntimev1alpha1.ToolGatewaySpec{ToolGatewayClassName: "tr-own-class-filter"},
 		}
 		Expect(k8sClient.Create(ctx, tg)).To(Succeed())
 
