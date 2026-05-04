@@ -41,6 +41,7 @@ const ToolGatewayAgentgatewayControllerName = "runtime.agentic-layer.ai/tool-gat
 const (
 	agentGatewayClassName = "agentgateway"
 	readyConditionType    = "Ready"
+	listenerNameHTTP      = "http"
 )
 
 // Condition reasons for ToolGateway Ready conditions. Kept fine-grained so
@@ -155,7 +156,7 @@ func (r *ToolGatewayReconciler) ensureGateway(ctx context.Context, toolGateway *
 			GatewayClassName: agentGatewayClassName,
 			Listeners: []gatewayv1.Listener{
 				{
-					Name:     "http",
+					Name:     listenerNameHTTP,
 					Protocol: gatewayv1.HTTPProtocolType,
 					Port:     gatewayv1.PortNumber(80),
 					AllowedRoutes: &gatewayv1.AllowedRoutes{

@@ -43,6 +43,12 @@ import (
 
 const ToolRouteAgentgatewayControllerName = "runtime.agentic-layer.ai/toolroute-agentgateway-controller"
 
+// URL schemes accepted for external upstreams.
+const (
+	schemeHTTP  = "http"
+	schemeHTTPS = "https"
+)
+
 // Condition reasons scoped to ToolRoute. Kept separate from ToolGateway
 // reasons so each CR's kubectl output and watchers can filter cleanly.
 const (
@@ -200,7 +206,7 @@ func resolveRouteUpstream(ctx context.Context, c client.Client, route *agentrunt
 			return "", 0, "", fmt.Errorf("invalid external.url: %w", e)
 		}
 		// Validate scheme
-		if u.Scheme != "http" && u.Scheme != "https" {
+		if u.Scheme != schemeHTTP && u.Scheme != schemeHTTPS {
 			return "", 0, "", fmt.Errorf("invalid external.url scheme %q: must be http or https", u.Scheme)
 		}
 		// Validate hostname
@@ -212,7 +218,7 @@ func resolveRouteUpstream(ctx context.Context, c client.Client, route *agentrunt
 		portStr := u.Port()
 		var p int32
 		if portStr == "" {
-			if u.Scheme == "https" {
+			if u.Scheme == schemeHTTPS {
 				p = 443
 			} else {
 				p = 80
@@ -335,9 +341,9 @@ func (r *ToolRouteReconciler) ensurePolicy(ctx context.Context, route *agentrunt
 		}
 
 		targetRef := map[string]interface{}{
-			"group": "gateway.networking.k8s.io",
-			"kind":  "HTTPRoute",
-			"name":  tg.Name + "-" + route.Name,
+			"group":   "gateway.networking.k8s.io",
+			"kind":    "HTTPRoute",
+			fieldName: tg.Name + "-" + route.Name,
 		}
 		if e := unstructured.SetNestedSlice(policy.Object, []interface{}{targetRef}, "spec", "targetRefs"); e != nil {
 			return e

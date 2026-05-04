@@ -45,6 +45,10 @@ const (
 	otelExporterOTLPTracesHeaders  = "OTEL_EXPORTER_OTLP_TRACES_HEADERS"
 	otelExporterOTLPMetricsHeaders = "OTEL_EXPORTER_OTLP_METRICS_HEADERS"
 	otelExporterOTLPLogsHeaders    = "OTEL_EXPORTER_OTLP_LOGS_HEADERS"
+
+	// Normalized OTLP protocol values accepted by agentgateway.
+	otlpProtocolGRPC = "grpc"
+	otlpProtocolHTTP = "http"
 )
 
 // otelConfig represents the extracted OTEL configuration from environment variables
@@ -177,10 +181,10 @@ func buildTelemetryConfig(config otelConfig) map[string]interface{} {
 	}
 	if protocol != "" {
 		// Normalize protocol value: "grpc/protobuf" or "http/protobuf" -> "grpc" or "http"
-		if strings.HasPrefix(protocol, "grpc") {
-			tracing.OtlpProtocol = "grpc"
-		} else if strings.HasPrefix(protocol, "http") {
-			tracing.OtlpProtocol = "http"
+		if strings.HasPrefix(protocol, otlpProtocolGRPC) {
+			tracing.OtlpProtocol = otlpProtocolGRPC
+		} else if strings.HasPrefix(protocol, otlpProtocolHTTP) {
+			tracing.OtlpProtocol = otlpProtocolHTTP
 		} else {
 			tracing.OtlpProtocol = protocol
 		}
