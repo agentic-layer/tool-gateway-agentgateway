@@ -60,6 +60,13 @@ func (e *ToolCallRejected) Error() string {
 	}
 }
 
+// JSON-RPC 2.0 envelope fields used by the MCP protocol.
+const (
+	jsonRPCVersion      = "2.0"
+	jsonRPCFieldJSONRPC = "jsonrpc"
+	jsonRPCFieldMethod  = "method"
+)
+
 // MCPInitializeParams are the standard parameters for an MCP initialize request.
 var MCPInitializeParams = map[string]interface{}{
 	"protocolVersion": "2024-11-05",
@@ -113,7 +120,7 @@ func doMCPRequest(
 		return nil, nil, err
 	}
 	if status != 200 {
-		method, _ := payload["method"].(string)
+		method, _ := payload[jsonRPCFieldMethod].(string)
 		return nil, headers, fmt.Errorf(
 			"MCP %s to %s returned status %d (Content-Type=%q): body=%s",
 			method, url, status, headers.Get("Content-Type"), previewBody(body))
@@ -125,10 +132,10 @@ func doMCPRequest(
 // header (empty string if none was issued).
 func initializeMCPSession(url string) (sessionID string, err error) {
 	initReq := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "initialize",
-		"params":  MCPInitializeParams,
+		jsonRPCFieldJSONRPC: jsonRPCVersion,
+		"id":                1,
+		jsonRPCFieldMethod:  "initialize",
+		"params":            MCPInitializeParams,
 	}
 	_, headers, err := doMCPRequest(url, initReq, nil)
 	if err != nil {
@@ -168,9 +175,9 @@ func CallTool(
 			}
 
 			callReq := map[string]interface{}{
-				"jsonrpc": "2.0",
-				"id":      2,
-				"method":  "tools/call",
+				jsonRPCFieldJSONRPC: jsonRPCVersion,
+				"id":                2,
+				jsonRPCFieldMethod:  "tools/call",
 				"params": map[string]interface{}{
 					"name":      toolName,
 					"arguments": arguments,
@@ -193,7 +200,7 @@ func CallTool(
 	parsedBody := ParseSSEBody(body)
 	g.Expect(json.Unmarshal(parsedBody, &responseMap)).To(gomega.Succeed(),
 		"tools/call response is not valid JSON: %s", previewBody(parsedBody))
-	g.Expect(responseMap["jsonrpc"]).To(gomega.Equal("2.0"))
+	g.Expect(responseMap[jsonRPCFieldJSONRPC]).To(gomega.Equal(jsonRPCVersion))
 
 	if rawErr, hasErr := responseMap["error"]; hasErr && rawErr != nil {
 		rpcErr, ok := rawErr.(map[string]interface{})
@@ -241,9 +248,9 @@ func FetchTools(g gomega.Gomega, target ServiceTarget, path string) []string {
 			}
 
 			listReq := map[string]interface{}{
-				"jsonrpc": "2.0",
-				"id":      2,
-				"method":  "tools/list",
+				jsonRPCFieldJSONRPC: jsonRPCVersion,
+				"id":                2,
+				jsonRPCFieldMethod:  "tools/list",
 			}
 			listBody, _, listErr := doMCPRequest(url, listReq, sessionHeaders(sessionID))
 			if listErr != nil {
@@ -258,7 +265,7 @@ func FetchTools(g gomega.Gomega, target ServiceTarget, path string) []string {
 	parsedBody := ParseSSEBody(body)
 	g.Expect(json.Unmarshal(parsedBody, &responseMap)).To(gomega.Succeed(),
 		"tools/list response is not valid JSON: %s", previewBody(parsedBody))
-	g.Expect(responseMap["jsonrpc"]).To(gomega.Equal("2.0"))
+	g.Expect(responseMap[jsonRPCFieldJSONRPC]).To(gomega.Equal(jsonRPCVersion))
 	if rpcErr, ok := responseMap["error"]; ok {
 		g.Expect(rpcErr).To(gomega.BeNil(), "tools/list returned JSON-RPC error: %v", rpcErr)
 	}

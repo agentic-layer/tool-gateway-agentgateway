@@ -27,6 +27,9 @@ import (
 	agentruntimev1alpha1 "github.com/agentic-layer/agent-runtime-operator/api/v1alpha1"
 )
 
+// fieldName is the conventional "name" key used in unstructured Kubernetes objects.
+const fieldName = "name"
+
 // newAgentgatewayBackend creates a new unstructured AgentgatewayBackend resource.
 func newAgentgatewayBackend(name, namespace string) *unstructured.Unstructured {
 	backend := &unstructured.Unstructured{}
@@ -40,7 +43,7 @@ func newAgentgatewayBackend(name, namespace string) *unstructured.Unstructured {
 // buildMCPTarget builds a single MCP target entry for an AgentgatewayBackend spec.
 func buildMCPTarget(name, host string, port int32, path string) map[string]interface{} {
 	return map[string]interface{}{
-		"name": name,
+		fieldName: name,
 		"static": map[string]interface{}{
 			"host":     host,
 			"port":     int64(port),
@@ -170,7 +173,7 @@ func setAgentgatewayParametersSpec(params *unstructured.Unstructured, toolGatewa
 			"spec": map[string]interface{}{
 				"containers": []interface{}{
 					map[string]interface{}{
-						"name":    "agentgateway",
+						fieldName: "agentgateway",
 						"envFrom": envFromSources,
 					},
 				},
