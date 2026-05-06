@@ -126,6 +126,32 @@ spec:
     - name: agent-runtime-operator
 ----
 
+== Optional: Enable Guardrails
+
+The operator can attach guardrails to a `ToolGateway` by deploying a `guardrail-adapter` instance per `Guard`. To enable this, the controller must be started with the `--guardrail-adapter-image=<image:tag>` flag. The shipped `install.yaml` already pins a known-compatible adapter version; if you build your own kustomize overlay, set the image via:
+
+[source,yaml]
+----
+patches:
+  - target: { kind: Deployment, name: controller-manager, namespace: tool-gateway-agentgateway-system }
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: controller-manager
+      spec:
+        template:
+          spec:
+            containers:
+              - name: manager
+                args:
+                  - --leader-elect
+                  - --health-probe-bind-address=:8081
+                  - --guardrail-adapter-image=ghcr.io/agentic-layer/guardrail-adapter:0.2.1
+----
+
+You also need a `GuardrailProvider` backing service (e.g. Presidio) reachable from the cluster. See xref:agent-runtime-operator:guardrails:how-to-guide.adoc[Create and Use Guardrails in Gateways] for the cross-gateway concepts and the xref:operator:reference.adoc#guardrails[Guardrails section in the reference] for ToolGateway-specific configuration.
+
 == Verify the installation
 
 [source,bash]

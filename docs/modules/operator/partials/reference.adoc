@@ -179,6 +179,118 @@ Semantics:
 * If both are set, **deny wins on conflict** — a tool matching any `deny` pattern is always blocked, even if it also matches an `allow` pattern.
 * Patterns use standard glob syntax (`*` matches any substring, `?` matches a single character).
 
+[#guardrails]
+== Guardrails
+
+The operator can attach guardrails to a `ToolGateway` to filter sensitive content (PII, harmful content) from tool traffic. Guardrails are expressed with the gateway-agnostic `Guard` and `GuardrailProvider` CRDs documented in xref:agent-runtime-operator:guardrails:reference.adoc[]; this section covers the agentgateway-specific behaviour.
+
+For each `Guard` referenced from `ToolGateway.spec.guardrails`, the operator automatically creates a dedicated `guardrail-adapter` workload (`Deployment` + `ConfigMap` + `Service`) pre-configured from the `Guard` and its `GuardrailProvider` -- no manual adapter deployment required. The gateway's `AgentgatewayPolicy` `extProc.backendRef` is wired at the adapter's service.
+
+=== Prerequisites
+
+. The operator must be started with `--guardrail-adapter-image=<image:tag>` (see xref:operator:how-to-guide.adoc#_optional_enable_guardrails[Enable Guardrails in the install guide]).
+. A `GuardrailProvider` backing service (e.g. Presidio) must be reachable from the cluster.
+
+=== Example: PII detection with Presidio
+
+[source,yaml]
+----
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: GuardrailProvider
+metadata:
+  name: presidio-analyzer
+  namespace: default
+spec:
+  type: presidio-api
+  presidio:
+    baseUrl: http://presidio-analyzer.default.svc:8080
+---
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: Guard
+metadata:
+  name: pii-guard
+  namespace: default
+spec:
+  mode:
+    - pre_call
+    - post_call
+  description: "Detects and masks PII in tool traffic"
+  providerRef:
+    name: presidio-analyzer
+  presidio:
+    language: "en"
+    scoreThresholds:
+      ALL: "0.5"
+      PERSON: "0.8"
+      EMAIL_ADDRESS: "0.7"
+    entityActions:
+      PERSON: "MASK"
+      EMAIL_ADDRESS: "MASK"
+      CREDIT_CARD: "BLOCK"
+      PHONE_NUMBER: "MASK"
+---
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: ToolGateway
+metadata:
+  name: my-tool-gateway
+  namespace: default
+spec:
+  toolGatewayClassName: agentgateway
+  guardrails:
+    - name: pii-guard
+----
+
+The operator creates `pii-guard-adapter` (`Deployment` + `ConfigMap` + `Service`) in the Guard's namespace and wires the `ToolGateway`'s `AgentgatewayPolicy` `extProc.backendRef` at it.
+
+A complete sample (Presidio + Guard + ToolGateway + ToolServer + ToolRoute) lives at https://github.com/agentic-layer/tool-gateway-agentgateway/tree/main/config/samples/guardrails. Apply it with `kubectl apply -k config/samples/guardrails`.
+
+=== Limitations
+
+* *Single Guard per ToolGateway*: agentgateway currently supports only one `ext_proc` slot per target. If you reference multiple guards, the operator sets a `GuardrailsUnsupported` status condition on the `ToolGateway`.
+* *Provider type*: Only `presidio-api` providers are supported today. Guards backed by `openai-moderation-api` or `bedrock-api` providers report `Ready=False` with reason `UnsupportedProviderType`.
+
+=== Status conditions
+
+[cols="1,1,1,3"]
+|===
+|Resource |Condition |Reason |Meaning
+
+|`Guard`
+|`Ready=False`
+|`AdapterNotConfigured`
+|Operator was started without `--guardrail-adapter-image`.
+
+|`Guard`
+|`Ready=False`
+|`ProviderNotFound`
+|`providerRef` does not resolve.
+
+|`Guard`
+|`Ready=False`
+|`UnsupportedProviderType`
+|Only `presidio-api` is supported today.
+
+|`Guard`
+|`Ready=False`
+|`InvalidConfig`
+|Validation failed (missing endpoint, empty modes, ...).
+
+|`ToolGateway`
+|`Ready=False`
+|`GuardNotFound`
+|A referenced Guard does not exist.
+
+|`ToolGateway`
+|`Ready=False`
+|`GuardNotReady`
+|A referenced Guard exists but its `Ready` condition is `False`.
+
+|`ToolGateway`
+|`Ready=False`
+|`GuardrailsUnsupported`
+|More than one Guard was referenced.
+|===
+
 == How it Works
 
 The Tool Gateway agentgateway Operator creates and manages Gateway API resources based on `ToolGateway`, `ToolRoute`, and `ToolServer` custom resources:
