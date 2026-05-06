@@ -128,7 +128,7 @@ spec:
 
 == Optional: Enable Guardrails
 
-The operator can attach guardrails to a `ToolGateway` by deploying a `guardrail-adapter` instance per `Guard`. To enable this, the controller must be started with the `--guardrail-adapter-image=<image:tag>` flag. The shipped `install.yaml` already pins a known-compatible adapter version; if you build your own kustomize overlay, set the image via:
+The operator can attach guardrails to a `ToolGateway` by deploying a `guardrail-adapter` instance per `Guard`. To enable this, the controller must be started with the `--guardrail-adapter-image=<image>:<tag>` flag. The shipped `install.yaml` already pins a known-compatible adapter version; if you build your own kustomize overlay, set the image via:
 
 [source,yaml]
 ----

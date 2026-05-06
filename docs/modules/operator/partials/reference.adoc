@@ -188,7 +188,7 @@ For each `Guard` referenced from `ToolGateway.spec.guardrails`, the operator aut
 
 === Prerequisites
 
-. The operator must be started with `--guardrail-adapter-image=<image:tag>` (see xref:operator:how-to-guide.adoc#_optional_enable_guardrails[Enable Guardrails in the install guide]).
+. The operator must be started with `--guardrail-adapter-image=<image>:<tag>` (see xref:operator:how-to-guide.adoc#_optional_enable_guardrails[Enable Guardrails in the install guide]).
 . A `GuardrailProvider` backing service (e.g. Presidio) must be reachable from the cluster.
 
 === Example: PII detection with Presidio
