@@ -121,7 +121,7 @@ metadata:
   name: my-tool-gateway
   namespace: my-namespace
 spec:
-  toolGatewayClassName: agentgateway  # Optional: uses default if not specified
+  toolGatewayClassName: agentgateway  # Optional; required unless a ToolGatewayClass is marked default
 ```
 
 This will create a `my-tool-gateway` Gateway in the `my-namespace` namespace.

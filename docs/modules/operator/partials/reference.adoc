@@ -30,7 +30,7 @@ metadata:
   name: my-tool-gateway
   namespace: my-namespace
 spec:
-  toolGatewayClassName: agentgateway  # Optional: uses default if not specified
+  toolGatewayClassName: agentgateway  # Optional; required unless a ToolGatewayClass is marked default
   env:                                 # Optional: environment variables
     - name: LOG_LEVEL
       value: "info"
@@ -86,12 +86,36 @@ apiVersion: runtime.agentic-layer.ai/v1alpha1
 kind: ToolGatewayClass
 metadata:
   name: agentgateway
-  namespace: tool-gateway
-  annotations:
-    toolgatewayclass.kubernetes.io/is-default-class: "true"
 spec:
   controller: runtime.agentic-layer.ai/tool-gateway-agentgateway-controller
 ----
+
+==== Marking a ToolGatewayClass as default
+
+The shipped `agentgateway` `ToolGatewayClass` is **not** marked as the cluster
+default. To claim `ToolGateway` resources that omit `spec.toolGatewayClassName`,
+either set the field explicitly on every `ToolGateway`, or add the
+`toolgatewayclass.kubernetes.io/is-default-class: "true"` annotation via a
+Kustomize overlay:
+
+[source,yaml]
+----
+# kustomization.yaml
+resources:
+  - https://github.com/agentic-layer/tool-gateway-agentgateway/releases/latest/download/install.yaml
+patches:
+  - patch: |-
+      apiVersion: runtime.agentic-layer.ai/v1alpha1
+      kind: ToolGatewayClass
+      metadata:
+        name: agentgateway
+        annotations:
+          toolgatewayclass.kubernetes.io/is-default-class: "true"
+----
+
+Use this only when this operator is the single Tool Gateway implementation in
+the cluster — multiple defaults across operators produce non-deterministic
+ownership of unlabeled `ToolGateway` resources.
 
 === ToolServer
 
