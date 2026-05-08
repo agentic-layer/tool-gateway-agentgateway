@@ -1,0 +1,51 @@
+// EXPLANATION — Diátaxis
+// This page is understanding-shaped: "what is this, why, how does it fit?"
+// DO: discuss design choices, alternatives, trade-offs; cross-link to how-to and reference.
+// DON'T: give step-by-step instructions; provide exhaustive field listings.
+// If a section drifts into "how do I do X" → move to how-to-guide.adoc.
+// If a section drifts into "list of all fields" → move to reference.adoc.
+
+= agentgateway as the Tool Gateway Implementation
+
+== What it is
+
+The Tool Gateway agentgateway Operator is a Kubernetes operator that implements the `ToolGateway` contract using https://agentgateway.dev/[agentgateway], a Gateway-API-native MCP gateway built on https://www.envoyproxy.io/[Envoy] and developed as part of the https://kgateway.dev/[kgateway] project. It watches `ToolGateway` resources that claim the `agentgateway` class, reconciles the Gateway API resources that agentgateway needs (a `Gateway`, an `AgentgatewayParameters`, per-route `AgentgatewayBackend` and `HTTPRoute` objects), and programs tool filtering via `AgentgatewayPolicy` CEL authorization rules.
+
+== Why it exists
+
+The `ToolGateway` and `ToolGatewayClass` CRDs in the Agent Runtime Operator define a declaration-only contract: what the platform wants, without dictating how the gateway is implemented. A separate implementation operator is needed to turn that declaration into running workloads.
+
+agentgateway was chosen as the reference implementation for MCP tool traffic for several reasons. Its Gateway-API-native architecture means the full Kubernetes Gateway API extension model applies: listeners, routes, and policies are expressed as standard resources, and the operator does not need to maintain its own routing data model. MCP tool servers are first-class objects in agentgateway's model — tool names are accessible via CEL expressions inside `AgentgatewayPolicy`, enabling per-tool allow/deny filtering directly in the data plane without any proxy-level scripting. Finally, agentgateway is built on Envoy, so it integrates with Envoy's `ext_proc` mechanism for external processing, which is how guardrails are attached: the operator deploys a per-guard adapter sidecar that agentgateway calls via `ext_proc` on every request and response.
+
+== How it fits
+
+The operator plugs into the Agent Runtime Operator ecosystem via the `ToolGatewayClass` resource. On startup the operator ensures that a `ToolGatewayClass` named `agentgateway` exists with `spec.controller: runtime.agentic-layer.ai/tool-gateway-agentgateway-controller`. Any `ToolGateway` resource whose `spec.toolGatewayClassName` is `agentgateway` is then claimed and reconciled by this operator.
+
+The relationship between `ToolGateway` and `ToolRoute` in this implementation differs from the typical Gateway API pattern where routes are autonomous resources managed by independent controllers. Here, the tool-gateway operator reconciles **both** the gateway (the `Gateway` + `AgentgatewayParameters`) and every `ToolRoute` that references it (the `AgentgatewayBackend` + `HTTPRoute` + optional `AgentgatewayPolicy`). This coupling is intentional: the `AgentgatewayPolicy` for tool filtering must be co-located with route creation to ensure correct CEL rule generation, and the operator needs a unified view of the gateway and all its routes to wire guardrail policies at the right attachment point.
+
+`ToolRoute` resources reference the gateway via `spec.toolGatewayRef`. When the `ToolRoute` is accepted, the operator creates an `HTTPRoute` that parents to the agentgateway `Gateway` object at the path `/<route-namespace>/<route-name>/mcp`, and populates `ToolRoute.status.url` with the reachable cluster-local URL. Agents that reference the route via `spec.tools[].upstream.toolRouteRef` receive this URL at reconcile time.
+
+For the broader gateway/class pluggability pattern, see xref:agent-runtime-operator:tool-gateways:explanation.adoc[].
+
+== Trade-offs and alternatives
+
+=== Gateway-API-native vs. a standalone proxy
+
+A simpler approach would deploy agentgateway as a standalone proxy with a static configuration file, regenerated on every change — similar to how the KrakenD operator works for agent gateways. Gateway-API-native operation is more complex to set up (it requires Gateway API CRDs and the agentgateway controller to be pre-installed) but allows incremental config updates: adding a `ToolRoute` creates a single new `HTTPRoute` and `AgentgatewayBackend` without touching the `Gateway` object, so there is no pod rollout per route change.
+
+=== ext_proc guardrails vs. in-process plugins
+
+The guardrail integration uses Envoy's `ext_proc` mechanism: for each `Guard` the operator deploys a dedicated adapter service that agentgateway calls as an external processor on every request and response. An in-process plugin approach (compiled into the gateway binary) would eliminate the per-request inter-process hop. The adapter model is preferred because it allows the guardrail logic to be upgraded independently of the gateway, and because the `guardrail-adapter` binary is shared across gateway implementations (including LiteLLM's AiGateway integration).
+
+=== Operator-managed routes vs. autonomous routes
+
+In the standard Kubernetes Gateway API, routes (`HTTPRoute`, `GRPCRoute`) are managed by application teams independently of the gateway operator. Here, the tool-gateway operator owns the `HTTPRoute` and `AgentgatewayPolicy` for each `ToolRoute`. This design makes tool filtering and status URL propagation reliable — the operator has the context it needs to generate correct CEL rules and to populate `ToolRoute.status.url` — but it means `ToolRoute` reconciliation is coupled to the tool-gateway implementation rather than being purely declarative.
+
+== Related
+
+* xref:tool-gateway-agentgateway::how-to-guides/install.adoc[]
+* xref:tool-gateway-agentgateway::how-to-guides/create-gateway.adoc[]
+* xref:tool-gateway-agentgateway::reference.adoc[]
+* xref:agent-runtime-operator:tool-gateways:explanation.adoc[]
+* xref:agent-runtime-operator:tool-routes:explanation.adoc[]
+* xref:agent-runtime-operator:guardrails:explanation.adoc[]

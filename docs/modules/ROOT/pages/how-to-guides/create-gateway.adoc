@@ -1,0 +1,109 @@
+// HOW-TO GUIDE — Diátaxis
+// This page answers a goal-shaped question: "how do I do X?"
+// DO: assume context; give concrete steps; link to reference for fields.
+// DON'T: teach concepts; duplicate reference content; include long explanations.
+// If a section drifts into "what is this and why" → move to explanation.adoc.
+// If a section drifts into "exhaustive list of fields/values" → move to reference.adoc.
+// If a section turns into a from-zero walkthrough → move to a tutorial in a showcase repo.
+
+= Create an agentgateway ToolGateway
+
+This guide shows you how to deploy a `ToolGateway` instance reconciled by the agentgateway operator, and how to attach `ToolRoute` resources to it.
+
+== Prerequisites
+
+* xref:tool-gateway-agentgateway::how-to-guides/install.adoc[Tool Gateway agentgateway Operator] installed.
+
+== Create the ToolGateway
+
+Apply a `ToolGateway` resource with `spec.toolGatewayClassName: agentgateway` to claim the agentgateway implementation:
+
+[source,yaml]
+----
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: ToolGateway
+metadata:
+  name: tool-gateway
+  namespace: tool-gateway
+spec:
+  toolGatewayClassName: agentgateway
+----
+
+[source,bash]
+----
+kubectl apply -f tool-gateway.yaml
+----
+
+The operator creates a Gateway API `Gateway` resource with the same name and namespace, an `AgentgatewayParameters` resource for operator-managed configuration, and wires them together.
+
+== Configure environment variables
+
+Pass additional configuration to the agentgateway container via `spec.env` or `spec.envFrom`. For example, to configure OpenTelemetry tracing:
+
+[source,yaml]
+----
+spec:
+  toolGatewayClassName: agentgateway
+  env:
+    - name: OTEL_EXPORTER_OTLP_ENDPOINT
+      value: http://otel-collector.monitoring:4318
+    - name: OTEL_EXPORTER_OTLP_PROTOCOL
+      value: http/protobuf
+----
+
+The OTEL environment variables are automatically translated to agentgateway's telemetry configuration and are not passed through to the container as environment variables. See xref:tool-gateway-agentgateway::reference.adoc[] for the full list of supported OTEL variables and other configuration details.
+
+== Attach ToolRoute resources
+
+Create `ToolRoute` resources that reference this gateway. For each route, the operator creates an `AgentgatewayBackend`, an `HTTPRoute` at `/<route-namespace>/<route-name>/mcp`, and optionally an `AgentgatewayPolicy` for tool filtering.
+
+[source,yaml]
+----
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: ToolRoute
+metadata:
+  name: my-tool-route
+  namespace: tool-gateway
+spec:
+  toolGatewayRef:
+    name: tool-gateway
+  upstream:
+    external:
+      url: https://github-mcp.example.com/mcp
+  toolFilter:
+    allow: ["get_*", "list_*"]
+    deny: ["*delete*"]
+----
+
+[source,bash]
+----
+kubectl apply -f tool-route.yaml
+----
+
+For the full set of `ToolRoute` fields and tool-filtering semantics, see xref:agent-runtime-operator:tool-routes:reference.adoc[] and xref:agent-runtime-operator:tool-routes:how-to-guide.adoc[].
+
+== Verify
+
+[source,bash]
+----
+# Check that the ToolGateway is ready
+kubectl get toolgateway tool-gateway -n tool-gateway
+
+# Check the underlying Gateway resource created by the operator
+kubectl get gateway tool-gateway -n tool-gateway
+
+# Check that the ToolRoute is ready and its URL is populated
+kubectl get toolroute my-tool-route -n tool-gateway -o yaml
+
+# Check the Gateway pod logs
+kubectl logs -l gateway.networking.k8s.io/gateway-name=tool-gateway -n tool-gateway
+----
+
+The gateway is ready when the `ToolGateway` shows `Ready=True`. Each attached `ToolRoute` has its `status.url` populated once the route is accepted.
+
+== Related
+
+* xref:tool-gateway-agentgateway::reference.adoc[]
+* xref:tool-gateway-agentgateway::explanation.adoc[]
+* xref:agent-runtime-operator:tool-routes:how-to-guide.adoc[]
+* xref:agent-runtime-operator:tool-gateways:how-to-guide.adoc[]

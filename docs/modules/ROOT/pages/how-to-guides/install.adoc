@@ -1,21 +1,23 @@
-= Install the Tool Gateway Operator for Agentgateway
+// HOW-TO GUIDE — Diátaxis
+// This page answers a goal-shaped question: "how do I do X?"
+// DO: assume context; give concrete steps; link to reference for fields.
+// DON'T: teach concepts; duplicate reference content; include long explanations.
+// If a section drifts into "what is this and why" → move to explanation.adoc.
+// If a section drifts into "exhaustive list of fields/values" → move to reference.adoc.
+// If a section turns into a from-zero walkthrough → move to a tutorial in a showcase repo.
 
-This guide walks you through installing the Agentgateway Tool Gateway Operator on your Kubernetes cluster.
+= Install the Tool Gateway agentgateway Operator
+
+This guide walks you through installing the Tool Gateway agentgateway Operator and all of its required dependencies on your Kubernetes cluster.
 
 == Prerequisites
 
-* **Kubernetes**: A running Kubernetes cluster (version 1.26.0 or higher)
-* **kubectl**: Kubernetes command-line tool
-* **helm**: Helm 3+ for installing dependencies
+* A running Kubernetes cluster (version 1.26.0 or higher) with `kubectl` configured.
+* https://helm.sh/[Helm 3+] installed.
 
 == Install Dependencies
 
-The operator requires the following infrastructure components to be installed first:
-
-* **https://cert-manager.io/[cert-manager]**: For certificate management (required for operator webhooks)
-* **https://gateway-api.sigs.k8s.io/[Gateway API CRDs]**: Standard Kubernetes Gateway API (required by agentgateway)
-* **https://agentgateway.dev/[agentgateway]**: Gateway implementation
-* **xref:agent-runtime-operator:agent-runtime:how-to-guides/install.adoc[Agent Runtime Operator]**: Provides ToolGateway, ToolGatewayClass, and ToolServer CRDs
+The operator requires the following infrastructure components to be installed first.
 
 === Install cert-manager
 
@@ -60,7 +62,9 @@ helm upgrade -i agentgateway \
   --wait
 ----
 
-=== Install Agent Runtime Operator
+=== Install the Agent Runtime Operator
+
+The Agent Runtime Operator provides the `ToolGateway`, `ToolGatewayClass`, `ToolRoute`, and `ToolServer` CRDs.
 
 [source,bash]
 ----
@@ -74,9 +78,7 @@ kubectl wait deployment.apps/agent-runtime-operator-controller-manager \
 
 == Install the Operator
 
-Once all dependencies are installed, you can install the Tool Gateway operator.
-
-=== Install with Kubernetes YAML
+=== Install with kubectl
 
 [source,bash]
 ----
@@ -91,7 +93,7 @@ Find the latest version at https://github.com/agentic-layer/tool-gateway-agentga
 
 === Install with Flux
 
-If you're using Flux for GitOps, you can install the operator using an OCI repository:
+If you are using Flux for GitOps, install the operator via its OCI repository:
 
 [source,yaml]
 ----
@@ -126,9 +128,9 @@ spec:
     - name: agent-runtime-operator
 ----
 
-== Optional: Enable Guardrails
+== Enable Guardrails (Optional)
 
-The operator can attach guardrails to a `ToolGateway` by deploying a `guardrail-adapter` instance per `Guard`. To enable this, the controller must be started with the `--guardrail-adapter-image=<image>:<tag>` flag. The shipped `install.yaml` already pins a known-compatible adapter version; if you build your own kustomize overlay, set the image via:
+The operator can attach guardrails to a `ToolGateway` to filter sensitive content from tool traffic. To enable this, the controller must be started with the `--guardrail-adapter-image=<image>:<tag>` flag. The shipped `install.yaml` already pins a known-compatible adapter version. If you build your own Kustomize overlay, set the image via:
 
 [source,yaml]
 ----
@@ -150,9 +152,9 @@ patches:
                   - --guardrail-adapter-image=ghcr.io/agentic-layer/guardrail-adapter:0.2.1
 ----
 
-You also need a `GuardrailProvider` backing service (e.g. Presidio) reachable from the cluster. See xref:agent-runtime-operator:guardrails:how-to-guide.adoc[Create and Use Guardrails in Gateways] for the cross-gateway concepts and the xref:operator:reference.adoc#guardrails[Guardrails section in the reference] for ToolGateway-specific configuration.
+You also need a `GuardrailProvider` backing service (e.g. Presidio) reachable from the cluster. See xref:agent-runtime-operator:guardrails:how-to-guide.adoc[Create and Use Guardrails in Gateways] for the cross-gateway concepts and xref:tool-gateway-agentgateway::reference.adoc#guardrails[the Guardrails section in the reference] for `ToolGateway`-specific configuration.
 
-== Verify the installation
+== Verify
 
 [source,bash]
 ----
@@ -162,7 +164,7 @@ kubectl get pods -n tool-gateway-agentgateway-system
 
 You should see the operator pod running.
 
-== Uninstallation
+== Uninstall
 
 To remove the operator:
 
@@ -189,3 +191,9 @@ kubectl delete -f https://github.com/kubernetes-sigs/gateway-api/releases/downlo
 helm uninstall cert-manager --namespace cert-manager
 kubectl delete namespace cert-manager
 ----
+
+== Related
+
+* xref:tool-gateway-agentgateway::how-to-guides/create-gateway.adoc[]
+* xref:tool-gateway-agentgateway::reference.adoc[]
+* xref:agent-runtime-operator:agent-runtime:how-to-guides/install.adoc[]

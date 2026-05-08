@@ -5,8 +5,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Project Overview and Developer Documentation
 - @README.md
 
+User Guides and How-To Guides
+- @docs/modules/ROOT/pages/how-to-guides/install.adoc
+- @docs/modules/ROOT/pages/how-to-guides/create-gateway.adoc
+
 Reference Documentation
+- @docs/modules/ROOT/pages/reference.adoc
 - Overall Agentic Layer Architecture: https://docs.agentic-layer.ai/architecture/main/index.html
+
+Documentation in AsciiDoc format is located in the `docs/` directory.
+This folder is hosted as a separate documentation site at https://docs.agentic-layer.ai/.
 
 ### Project Structure
 
