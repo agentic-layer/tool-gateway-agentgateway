@@ -39,8 +39,10 @@ kubectl wait validatingwebhookconfiguration/cert-manager-webhook \
 
 [source,bash]
 ----
-kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.1/standard-install.yaml
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/latest/download/standard-install.yaml
 ----
+
+Browse all Gateway API releases at https://github.com/kubernetes-sigs/gateway-api/releases.
 
 === Install agentgateway
 
@@ -185,7 +187,7 @@ helm uninstall agentgateway --namespace agentgateway-system
 helm uninstall agentgateway-crds --namespace agentgateway-system
 
 # Uninstall Gateway API CRDs
-kubectl delete -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.1/standard-install.yaml
+kubectl delete -f https://github.com/kubernetes-sigs/gateway-api/releases/latest/download/standard-install.yaml
 
 # Uninstall cert-manager
 helm uninstall cert-manager --namespace cert-manager
